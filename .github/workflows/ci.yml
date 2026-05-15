@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+      - name: Sync dependencies
+        run: uv sync --all-extras --dev
+      - name: Lint
+        run: uv run ruff check
+      - name: Test
+        run: uv run pytest
+
+  build:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build apworld
+        run: ./scripts/build_apworld.sh
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: seed_browser.apworld
+          path: dist/seed_browser.apworld
+          if-no-files-found: error
