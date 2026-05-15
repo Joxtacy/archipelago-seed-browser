@@ -132,6 +132,27 @@ def test_scan_seed_prefers_zip_entry_mtime_over_filesystem(tmp_path: Path) -> No
     assert seed.mtime != 3_000_000_000.0
 
 
+def test_scan_seed_detects_apsave_sibling(tmp_path: Path) -> None:
+    """A sibling ``<id>.apsave`` is the signal that the seed has been
+    hosted; its mtime is the last-hosted time."""
+    p = tmp_path / "AP_50000.zip"
+    _write_seed_zip(p, "50000")
+    save = tmp_path / "AP_50000.apsave"
+    save.write_bytes(b"fake-save-content")
+    os.utime(save, (1_750_000_000, 1_750_000_000))
+    seed = scan_seed(p)
+    assert seed.has_save is True
+    assert seed.last_hosted == 1_750_000_000.0
+
+
+def test_scan_seed_without_apsave_reports_unhosted(tmp_path: Path) -> None:
+    p = tmp_path / "AP_50001.zip"
+    _write_seed_zip(p, "50001")
+    seed = scan_seed(p)
+    assert seed.has_save is False
+    assert seed.last_hosted is None
+
+
 def test_scan_seed_falls_back_to_filesystem_mtime_when_no_archipelago(
     tmp_path: Path,
 ) -> None:

@@ -22,6 +22,11 @@ declaring the phase done.
 - Refreshes when the output folder changes, or via an explicit refresh button.
 - Game-name detection works dynamically by inspecting the patch suffixes
   declared by registered worlds — no hardcoded extension table.
+- **Save-file awareness (v1 scope extension, 2026-05-15).** Detect a
+  sibling `<seed_id>.apsave` written by MultiServer (`MultiServer.py:613`)
+  and surface "has been hosted" + "last hosted time" on the row. Sort by
+  last-hosted time. Deeper save inspection (per-slot progress,
+  completion state) remains deferred to v1.1 per IDEAS.md.
 - Ships as a single `.apworld` artifact installable by drop-in.
 
 ## 2. Out of scope for v1

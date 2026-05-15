@@ -17,8 +17,13 @@ from .scanner import Seed, scan_directory
 
 logger = logging.getLogger(__name__)
 
-SortKey = Literal["date", "size", "slots"]
-_SORT_LABELS: dict[SortKey, str] = {"date": "Date", "size": "Size", "slots": "Slots"}
+SortKey = Literal["date", "size", "slots", "hosted"]
+_SORT_LABELS: dict[SortKey, str] = {
+    "date": "Date",
+    "size": "Size",
+    "slots": "Slots",
+    "hosted": "Last hosted",
+}
 
 
 def run(*args: str) -> None:
@@ -46,7 +51,12 @@ def _format_seed_row(seed: Seed) -> str:
     games_str = ", ".join(f"{count}×{game}" if count > 1 else game for game, count in seed.games)
     size_str = _format_size(seed.size_bytes)
     spoiler = "  (spoiler)" if seed.has_spoiler else ""
-    return f"{ts}  ·  {nslots} slots  ·  {games_str}  ·  {size_str}{spoiler}"
+    if seed.has_save and seed.last_hosted is not None:
+        hosted_ts = datetime.datetime.fromtimestamp(seed.last_hosted).strftime("%Y-%m-%d %H:%M")
+        hosted = f"  ·  hosted {hosted_ts}"
+    else:
+        hosted = ""
+    return f"{ts}  ·  {nslots} slots  ·  {games_str}  ·  {size_str}{spoiler}{hosted}"
 
 
 def _format_size(n: int) -> str:
@@ -60,7 +70,26 @@ def _format_size(n: int) -> str:
 
 
 def sort_seeds(seeds: list[Seed], *, key: SortKey, desc: bool) -> list[Seed]:
-    """Return *seeds* sorted by *key*. Pure helper — extracted for testing."""
+    """Return *seeds* sorted by *key*. Pure helper — extracted for testing.
+
+    For ``key="hosted"`` unhosted seeds (no ``.apsave``) always trail
+    the hosted ones regardless of direction; among themselves they keep
+    descending-mtime order so the most recently *generated* unhosted
+    seed sits at the top of the unhosted block.
+    """
+    if key == "hosted":
+        hosted = sorted(
+            (s for s in seeds if s.has_save),
+            key=lambda s: s.last_hosted or 0.0,
+            reverse=desc,
+        )
+        unhosted = sorted(
+            (s for s in seeds if not s.has_save),
+            key=lambda s: s.mtime,
+            reverse=True,
+        )
+        return hosted + unhosted
+
     keyfns = {
         "date": lambda s: s.mtime,
         "size": lambda s: s.size_bytes,
@@ -190,12 +219,12 @@ def _run_app(args: tuple[str, ...]) -> None:
                     width=dp(64),
                 )
             )
-            for key in ("date", "size", "slots"):
+            for key in ("date", "size", "slots", "hosted"):
                 btn = MDButton(
                     MDButtonText(text=_SORT_LABELS[key]),
                     style="tonal",
                     size_hint=(None, None),
-                    size=(dp(128), dp(40)),
+                    size=(dp(176), dp(40)),
                 )
                 btn.bind(on_release=lambda _btn, k=key: self._set_sort(k))
                 self._sort_buttons[key] = btn

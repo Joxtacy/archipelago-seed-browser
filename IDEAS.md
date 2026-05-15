@@ -48,14 +48,15 @@ Concrete features unlocked:
   the raw SHA from the UI by default — it's only useful for
   troubleshooting.
 
-## Save-file awareness (high value, low complexity)
+## Save-file awareness — deeper tiers (post-v1)
 
-When AP's Host process runs a seed, `MultiServer` writes a sibling
-`<seed_id>.apsave` next to the zip in the same output folder
-(`MultiServer.py:613`). The file is a zlib-compressed pickled dict of
-the server's running state; its presence is the definitive signal that
-the seed has been hosted at least once. Decoded structure observed
-2026-05-15 against a real save:
+Tiers 1–2 (sibling-file existence + last-hosted timestamp) shipped in
+v1 per the PLAN §1 update. The remaining tiers stay here as v1.1+
+candidates.
+
+When AP's Host runs a seed, `MultiServer` writes a sibling
+`<seed_id>.apsave` next to the zip (`MultiServer.py:613`) — zlib +
+pickled dict of server state. Schema observed 2026-05-15:
 
 ```
 client_activity_timers     # tuple[(team, slot) → unix-ts]
@@ -70,30 +71,20 @@ game_options               # baked-in server-side options
 version                    # save schema version (currently 2)
 ```
 
-Each tier below stacks on the previous. All four reuse the scanner's
-sibling-file pattern.
-
-- **Hosted / unhosted marker.** Add `has_save: bool` to `Seed` —
-  populated by `seed.path.with_suffix(".apsave").exists()`. Show a
-  small "played" badge on the row or filter "unplayed only".
-- **Last-hosted timestamp.** `apsave.stat().st_mtime` reflects the last
-  save (= most recent host shutdown). Render "last hosted 3 days ago"
-  next to the generation time, or as a secondary column. Becomes a
-  fourth sort key.
 - **Per-slot progress** from `location_checks`: total checks per slot
   comes from the multidata's `locations` map (already in `payload`);
   completed checks come from `len(location_checks[(team, slot)])`.
   Display `12 / 87` per slot in the expanded row. Decoding is `zlib +
-  pickle.loads` and is gated on `save_version` to stay safe across
-  schema bumps.
+  pickle.loads` and should be gated on `save_version` to stay safe
+  across schema bumps.
 - **Completion state** from `client_game_state`. `ClientStatus.CLIENT_GOAL`
   (30) means the slot is finished. Show a ✓ on completed slots; tag a
   row as "complete" when all player slots are at goal. Drives a
-  "completed seeds" filter, and a candidate for auto-archive
-  workflows.
+  "completed seeds" filter and a candidate for auto-archive workflows.
 
-Note: this supersedes the standalone "Recently-hosted history" idea —
-AP already maintains the history we'd otherwise track in a sidecar.
+Note: the save-file presence check supersedes the standalone
+"Recently-hosted history" idea — AP already maintains the history we'd
+otherwise track in a sidecar.
 
 ## Quick wins
 

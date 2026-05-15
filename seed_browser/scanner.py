@@ -39,6 +39,13 @@ class Seed:
     """``[(slot_num, slot_name, game_name), ...]`` sorted by slot number."""
     has_spoiler: bool = False
     has_archipelago_file: bool = False
+    has_save: bool = False
+    """Set when a sibling ``<seed_id>.apsave`` exists, i.e. the seed has
+    been hosted at least once."""
+    last_hosted: float | None = None
+    """POSIX timestamp of the sibling ``.apsave``'s mtime (= the last
+    time the server shut down and flushed state). ``None`` when the
+    seed has never been hosted."""
     error: str | None = None
 
 
@@ -79,7 +86,28 @@ def scan_seed(path: Path) -> Seed:
     except Exception as e:  # noqa: BLE001  # never crash the launcher
         logger.exception("unexpected scan error for %s", path)
         seed.error = f"{type(e).__name__}: {e}"
+
+    _populate_save_info(seed)
     return seed
+
+
+def _populate_save_info(seed: Seed) -> None:
+    """Detect a sibling ``<seed_id>.apsave`` written by MultiServer at
+    ``MultiServer.py:613`` and populate ``has_save`` / ``last_hosted``.
+
+    Stat failures (permissions, weird FS) are non-fatal — we just leave
+    the fields at their defaults.
+    """
+    save_path = seed.path.with_suffix(".apsave")
+    try:
+        save_stat = save_path.stat()
+    except FileNotFoundError:
+        return
+    except OSError as e:
+        logger.warning("cannot stat %s: %s", save_path, e)
+        return
+    seed.has_save = True
+    seed.last_hosted = save_stat.st_mtime
 
 
 def scan_directory(folder: Path) -> list[Seed]:

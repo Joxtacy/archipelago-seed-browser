@@ -20,6 +20,12 @@ Keep `pyproject.toml`'s `version` field in sync with the tag you're about
 to push. PEP 440 normalizes hyphens, so a tag like `v1.0.0-rc1` should map
 to `version = "1.0.0rc1"`.
 
+`seed_browser/archipelago.json` carries a separate `world_version` that AP
+reads from inside the apworld. AP's parser is strict three-part semver
+(`int(piece) for piece in version.split(".")`) — prerelease suffixes are
+not allowed. Update `world_version` only on stable tags (e.g. `1.0.0`,
+`1.1.0`); leave it untouched through rc cycles.
+
 ## Cutting a release
 
 1. **Decide what's in it.** `main` should already contain everything you
