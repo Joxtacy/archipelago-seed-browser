@@ -72,7 +72,11 @@ def test_scan_seed_corrupt_zip(tmp_path: Path) -> None:
     assert seed.size_bytes == len(b"not a zip")
 
 
-def _write_seed_with_zip_date(path: Path, seed_id: str, date_time: tuple[int, int, int, int, int, int]) -> None:
+def _write_seed_with_zip_date(
+    path: Path,
+    seed_id: str,
+    date_time: tuple[int, int, int, int, int, int],
+) -> None:
     """Like ``_write_seed_zip`` but stamps the ``.archipelago`` entry's
     ``date_time`` explicitly so mtime-based assertions are deterministic
     (scanner reads the zip entry mtime, not the filesystem mtime)."""
