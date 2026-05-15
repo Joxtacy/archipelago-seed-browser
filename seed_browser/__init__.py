@@ -19,6 +19,7 @@ try:
         Component,
         Type,
         components,
+        icon_paths,
     )
     from worlds.LauncherComponents import (
         launch as launch_component,
@@ -46,11 +47,13 @@ def _launch(*args: str) -> None:
 
 
 if _AP_AVAILABLE:
+    icon_paths["seed_browser"] = f"ap:{__name__}/icon.png"
     components.append(
         Component(
             "Seed Browser",
             func=_launch,
             component_type=Type.TOOL,
+            icon="seed_browser",
             description="Browse generated multiworld seed zips.",
         )
     )

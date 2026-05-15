@@ -13,6 +13,7 @@ the namelist.
 
 from __future__ import annotations
 
+import datetime
 import logging
 import re
 import zipfile
@@ -60,6 +61,11 @@ def scan_seed(path: Path) -> Seed:
             archipelago_name = next((n for n in names if n.endswith(".archipelago")), None)
             seed.has_archipelago_file = archipelago_name is not None
             if archipelago_name is not None:
+                # The zip entry's date_time is set by AP at generation
+                # (Main.py:387 calls zf.write() which copies the temp
+                # file's mtime). Prefer it over the filesystem mtime,
+                # which gets clobbered when seeds are copied/synced.
+                seed.mtime = _zip_entry_mtime(zf.getinfo(archipelago_name))
                 slot_info = _decode_slot_info(zf.read(archipelago_name))
                 seed.slots = [
                     (slot_num, slot_name, game)
@@ -108,6 +114,17 @@ def _decode_slot_info(blob: bytes) -> dict[int, tuple[str, str]]:
     payload = restricted_loads(zlib.decompress(blob[1:]))
     slot_info = payload.get("slot_info", {})
     return {int(slot): (ns.name, ns.game) for slot, ns in slot_info.items()}
+
+
+def _zip_entry_mtime(info: zipfile.ZipInfo) -> float:
+    """Convert a zip entry's ``date_time`` tuple to a POSIX timestamp.
+
+    Zip dates have 2-second resolution and no timezone — they're written
+    in the generating machine's local time. We interpret them in the
+    reader's local time, which is correct for the common single-user
+    case and harmless for sort ordering even across timezones.
+    """
+    return datetime.datetime(*info.date_time).timestamp()
 
 
 def _collapse_games(slots: list[tuple[int, str, str]]) -> list[tuple[str, int]]:

@@ -10,11 +10,15 @@ from __future__ import annotations
 import datetime
 import logging
 from pathlib import Path
+from typing import Literal
 
 from . import actions
 from .scanner import Seed, scan_directory
 
 logger = logging.getLogger(__name__)
+
+SortKey = Literal["date", "size", "slots"]
+_SORT_LABELS: dict[SortKey, str] = {"date": "Date", "size": "Size", "slots": "Slots"}
 
 
 def run(*args: str) -> None:
@@ -55,7 +59,45 @@ def _format_size(n: int) -> str:
     return f"{size:.1f} {units[-1]}"
 
 
+def sort_seeds(seeds: list[Seed], *, key: SortKey, desc: bool) -> list[Seed]:
+    """Return *seeds* sorted by *key*. Pure helper — extracted for testing."""
+    keyfns = {
+        "date": lambda s: s.mtime,
+        "size": lambda s: s.size_bytes,
+        "slots": lambda s: len(s.slots),
+    }
+    return sorted(seeds, key=keyfns[key], reverse=desc)
+
+
+def _start_watcher(output_dir: Path, on_change: object) -> object | None:
+    """Soft-import ``watchdog`` and start a debounced observer for
+    *output_dir*. Returns the started ``Observer`` (so caller can stop
+    it) or ``None`` if watchdog is unavailable.
+
+    *on_change* is invoked from a watchdog thread, so callers must
+    marshal back to the UI thread themselves (Kivy's ``Clock`` is the
+    standard tool for this).
+    """
+    try:
+        from watchdog.events import FileSystemEventHandler
+        from watchdog.observers import Observer
+    except ImportError:
+        logger.info("watchdog not installed — auto-refresh disabled")
+        return None
+
+    class _Handler(FileSystemEventHandler):
+        def on_any_event(self, event: object) -> None:  # noqa: ARG002
+            on_change()
+
+    observer = Observer()
+    observer.schedule(_Handler(), str(output_dir), recursive=False)
+    observer.daemon = True
+    observer.start()
+    return observer
+
+
 def _run_app(args: tuple[str, ...]) -> None:
+    from kivy.clock import Clock
     from kivy.metrics import dp
     from kivymd.uix.boxlayout import MDBoxLayout
     from kivymd.uix.button import MDButton, MDButtonText
@@ -74,14 +116,40 @@ def _run_app(args: tuple[str, ...]) -> None:
             self.set_colors()
             self._list_widget: MDList | None = None
             self._status_label: MDLabel | None = None
+            self._sort_buttons: dict[SortKey, MDButton] = {}
+            self._sort_key: SortKey = "date"
+            self._sort_desc: bool = True
+            self._observer: object | None = None
+            self._refresh_pending: bool = False
 
         def build(self) -> MDBoxLayout:
             root = MDBoxLayout(
                 orientation="vertical",
                 padding=dp(16),
-                spacing=dp(12),
+                spacing=dp(8),
             )
 
+            root.add_widget(self._build_header())
+            root.add_widget(self._build_sort_bar())
+
+            scroll = MDScrollView()
+            self._list_widget = MDList()
+            scroll.add_widget(self._list_widget)
+            root.add_widget(scroll)
+
+            self._status_label = MDLabel(
+                text="",
+                halign="left",
+                size_hint_y=None,
+                height=dp(24),
+            )
+            root.add_widget(self._status_label)
+
+            self._refresh()
+            self._observer = _start_watcher(output_dir, self._on_watcher_event)
+            return root
+
+        def _build_header(self) -> MDBoxLayout:
             header = MDBoxLayout(
                 orientation="horizontal",
                 size_hint_y=None,
@@ -104,49 +172,119 @@ def _run_app(args: tuple[str, ...]) -> None:
             )
             refresh_btn.bind(on_release=lambda _btn: self._refresh())
             header.add_widget(refresh_btn)
-            root.add_widget(header)
+            return header
 
-            scroll = MDScrollView()
-            self._list_widget = MDList()
-            scroll.add_widget(self._list_widget)
-            root.add_widget(scroll)
-
-            self._status_label = MDLabel(
-                text="",
-                halign="left",
+        def _build_sort_bar(self) -> MDBoxLayout:
+            bar = MDBoxLayout(
+                orientation="horizontal",
                 size_hint_y=None,
-                height=dp(24),
+                height=dp(40),
+                spacing=dp(8),
             )
-            root.add_widget(self._status_label)
+            bar.add_widget(
+                MDLabel(
+                    text="Sort by",
+                    halign="left",
+                    valign="center",
+                    size_hint_x=None,
+                    width=dp(64),
+                )
+            )
+            for key in ("date", "size", "slots"):
+                btn = MDButton(
+                    MDButtonText(text=_SORT_LABELS[key]),
+                    style="tonal",
+                    size_hint=(None, None),
+                    size=(dp(128), dp(40)),
+                )
+                btn.bind(on_release=lambda _btn, k=key: self._set_sort(k))
+                self._sort_buttons[key] = btn
+                bar.add_widget(btn)
+            bar.add_widget(MDLabel())  # spacer
+            self._update_sort_button_labels()
+            return bar
 
+        def _set_sort(self, key: SortKey) -> None:
+            if key == self._sort_key:
+                self._sort_desc = not self._sort_desc
+            else:
+                self._sort_key = key
+                self._sort_desc = True
+            self._update_sort_button_labels()
             self._refresh()
-            return root
+
+        def _update_sort_button_labels(self) -> None:
+            suffix = " (desc)" if self._sort_desc else " (asc)"
+            for key, btn in self._sort_buttons.items():
+                label = _SORT_LABELS[key]
+                if key == self._sort_key:
+                    label = f"{label}{suffix}"
+                    btn.style = "filled"
+                else:
+                    btn.style = "tonal"
+                btn.children[0].text = label
 
         def _refresh(self) -> None:
             assert self._list_widget is not None
             assert self._status_label is not None
             self._list_widget.clear_widgets()
-            seeds = scan_directory(output_dir)
-            if not seeds:
-                empty_row = MDBoxLayout(
-                    orientation="horizontal",
-                    size_hint_y=None,
-                    height=dp(56),
-                    padding=(dp(16), 0),
+
+            if not output_dir.exists():
+                self._show_message(
+                    f"Output folder does not exist:\n{output_dir}",
+                    status="folder missing",
                 )
-                empty_row.add_widget(
-                    MDLabel(
-                        text=f"No AP_*.zip seeds found in {output_dir}",
-                        halign="left",
-                        valign="center",
-                    )
-                )
-                self._list_widget.add_widget(empty_row)
-                self._status_label.text = "0 seeds"
                 return
-            for seed in seeds:
+            if not output_dir.is_dir():
+                self._show_message(
+                    f"Output path is not a directory:\n{output_dir}",
+                    status="not a directory",
+                )
+                return
+
+            try:
+                seeds = scan_directory(output_dir)
+            except OSError as e:
+                self._show_message(
+                    f"Cannot read {output_dir}:\n{e}",
+                    status="folder unreadable",
+                )
+                return
+
+            if not seeds:
+                self._show_message(
+                    f"No AP_*.zip seeds found in\n{output_dir}",
+                    status="0 seeds",
+                )
+                return
+
+            for seed in sort_seeds(seeds, key=self._sort_key, desc=self._sort_desc):
                 self._list_widget.add_widget(self._build_seed_row(seed))
             self._status_label.text = f"{len(seeds)} seeds"
+
+        def _show_message(self, text: str, *, status: str) -> None:
+            assert self._list_widget is not None
+            assert self._status_label is not None
+            row = MDBoxLayout(
+                orientation="horizontal",
+                size_hint_y=None,
+                height=dp(96),
+                padding=(dp(16), dp(8)),
+            )
+            row.add_widget(MDLabel(text=text, halign="left", valign="center"))
+            self._list_widget.add_widget(row)
+            self._status_label.text = status
+
+        def _on_watcher_event(self) -> None:
+            """Watchdog thread → debounce → main thread refresh."""
+            if self._refresh_pending:
+                return
+            self._refresh_pending = True
+            Clock.schedule_once(lambda _dt: self._coalesced_refresh(), 0.5)
+
+        def _coalesced_refresh(self) -> None:
+            self._refresh_pending = False
+            self._refresh()
 
         def _build_seed_row(self, seed: Seed) -> MDBoxLayout:
             row = MDBoxLayout(

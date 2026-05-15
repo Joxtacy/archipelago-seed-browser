@@ -7,6 +7,7 @@ otherwise so the suite stays runnable without an AP checkout.
 
 from __future__ import annotations
 
+import datetime
 import os
 import zipfile
 from pathlib import Path
@@ -71,13 +72,21 @@ def test_scan_seed_corrupt_zip(tmp_path: Path) -> None:
     assert seed.size_bytes == len(b"not a zip")
 
 
+def _write_seed_with_zip_date(path: Path, seed_id: str, date_time: tuple[int, int, int, int, int, int]) -> None:
+    """Like ``_write_seed_zip`` but stamps the ``.archipelago`` entry's
+    ``date_time`` explicitly so mtime-based assertions are deterministic
+    (scanner reads the zip entry mtime, not the filesystem mtime)."""
+    with zipfile.ZipFile(path, "w") as zf:
+        info = zipfile.ZipInfo(filename=f"AP_{seed_id}.archipelago")
+        info.date_time = date_time
+        zf.writestr(info, b"\x00\x00")
+
+
 def test_scan_directory_sorts_by_mtime_desc(tmp_path: Path) -> None:
     old = tmp_path / "AP_111.zip"
     new = tmp_path / "AP_222.zip"
-    _write_seed_zip(old, "111")
-    _write_seed_zip(new, "222")
-    os.utime(old, (1_000_000, 1_000_000))
-    os.utime(new, (2_000_000, 2_000_000))
+    _write_seed_with_zip_date(old, "111", (2020, 1, 1, 0, 0, 0))
+    _write_seed_with_zip_date(new, "222", (2024, 6, 1, 12, 0, 0))
     seeds = scan_directory(tmp_path)
     assert [s.path.name for s in seeds] == ["AP_222.zip", "AP_111.zip"]
 
@@ -95,6 +104,40 @@ def test_scan_directory_missing_folder(tmp_path: Path) -> None:
     """Listing a nonexistent dir returns an empty list, not a crash."""
     seeds = scan_directory(tmp_path / "does-not-exist")
     assert seeds == []
+
+
+def test_scan_seed_prefers_zip_entry_mtime_over_filesystem(tmp_path: Path) -> None:
+    """A seed's reported mtime should reflect when AP generated it, not
+    when the zip happened to land on disk. The zip entry's ``date_time``
+    is the authoritative source; the filesystem mtime is the fallback.
+    """
+    import zipfile as _zipfile  # local alias so we can construct a ZipInfo
+
+    p = tmp_path / "AP_42.zip"
+    info = _zipfile.ZipInfo(filename="AP_42.archipelago")
+    info.date_time = (2024, 1, 15, 12, 30, 0)  # well before the filesystem mtime below
+    with _zipfile.ZipFile(p, "w") as zf:
+        zf.writestr(info, b"\x00\x00")  # decode will fail but mtime is still read
+
+    # Far-future filesystem mtime that the scanner must ignore.
+    os.utime(p, (3_000_000_000, 3_000_000_000))
+
+    seed = scan_seed(p)
+    expected = datetime.datetime(2024, 1, 15, 12, 30, 0).timestamp()
+    assert seed.mtime == expected
+    assert seed.mtime != 3_000_000_000.0
+
+
+def test_scan_seed_falls_back_to_filesystem_mtime_when_no_archipelago(
+    tmp_path: Path,
+) -> None:
+    """Without a ``.archipelago`` entry there's no zip-internal date to
+    trust, so we keep ``path.stat().st_mtime``."""
+    p = tmp_path / "AP_99.zip"
+    _write_seed_zip(p, "99", multidata_blob=None, spoiler=False)
+    os.utime(p, (1_700_000_000, 1_700_000_000))
+    seed = scan_seed(p)
+    assert seed.mtime == 1_700_000_000.0
 
 
 def test_collapse_games_preserves_first_seen_order() -> None:
