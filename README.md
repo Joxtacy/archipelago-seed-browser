@@ -62,6 +62,7 @@ Multidata-decoding tests require Archipelago on the import path; set
 - [`NOTES.md`](NOTES.md) — reference notes against the AP 0.6.7 source.
 - [`IDEAS.md`](IDEAS.md) — post-v1 ideas (search/filter, favourites,
   batch ops, etc.).
+- [`RELEASING.md`](RELEASING.md) — runbook for cutting a release.
 
 ## License
 
