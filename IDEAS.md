@@ -48,12 +48,65 @@ Concrete features unlocked:
   the raw SHA from the UI by default — it's only useful for
   troubleshooting.
 
+## Save-file awareness (high value, low complexity)
+
+When AP's Host process runs a seed, `MultiServer` writes a sibling
+`<seed_id>.apsave` next to the zip in the same output folder
+(`MultiServer.py:613`). The file is a zlib-compressed pickled dict of
+the server's running state; its presence is the definitive signal that
+the seed has been hosted at least once. Decoded structure observed
+2026-05-15 against a real save:
+
+```
+client_activity_timers     # tuple[(team, slot) → unix-ts]
+client_connection_timers   # tuple[(team, slot) → unix-ts]
+client_game_state          # dict[(team, slot) → ClientStatus int]
+connect_names              # dict[player-name → (team, slot)]
+hints / hints_used         # hint state
+location_checks            # dict[(team, slot) → set[location_id]]
+received_items             # dict[(team, slot) → list[item]]
+group_collected / stored_data / name_aliases / random_state
+game_options               # baked-in server-side options
+version                    # save schema version (currently 2)
+```
+
+Each tier below stacks on the previous. All four reuse the scanner's
+sibling-file pattern.
+
+- **Hosted / unhosted marker.** Add `has_save: bool` to `Seed` —
+  populated by `seed.path.with_suffix(".apsave").exists()`. Show a
+  small "played" badge on the row or filter "unplayed only".
+- **Last-hosted timestamp.** `apsave.stat().st_mtime` reflects the last
+  save (= most recent host shutdown). Render "last hosted 3 days ago"
+  next to the generation time, or as a secondary column. Becomes a
+  fourth sort key.
+- **Per-slot progress** from `location_checks`: total checks per slot
+  comes from the multidata's `locations` map (already in `payload`);
+  completed checks come from `len(location_checks[(team, slot)])`.
+  Display `12 / 87` per slot in the expanded row. Decoding is `zlib +
+  pickle.loads` and is gated on `save_version` to stay safe across
+  schema bumps.
+- **Completion state** from `client_game_state`. `ClientStatus.CLIENT_GOAL`
+  (30) means the slot is finished. Show a ✓ on completed slots; tag a
+  row as "complete" when all player slots are at goal. Drives a
+  "completed seeds" filter, and a candidate for auto-archive
+  workflows.
+
+Note: this supersedes the standalone "Recently-hosted history" idea —
+AP already maintains the history we'd otherwise track in a sidecar.
+
 ## Quick wins
 
 - **Search / filter.** Text box that filters rows by filename, game
   name, or slot name. Becomes essential as the list passes ~20 seeds.
 - **Sort by game name.** Alphabetical, in addition to date / size / slots.
 - **Copy seed ID to clipboard** from the row (small icon button).
+- **"Host on archipelago.gg" → open browser.** New row button that
+  calls `webbrowser.open("https://archipelago.gg/uploads")`. User still
+  picks the file manually on the upload page, but it cuts the
+  "remember-the-URL, open-a-tab" friction. Zero protocol risk; no
+  authentication required from us. Stretch shape lives under "Bigger"
+  below.
 - **Empty-spoiler edge case.** Some seeds have a `_Spoiler.txt` entry
   that's just the header (race mode partial). Detect and reflect in the
   Spoiler button state (e.g. show as "empty spoiler" rather than just
@@ -72,15 +125,25 @@ Concrete features unlocked:
   (`.aplttp`, `.apmc`, etc.) to disk for sending to a player.
 - **Batch operations.** Multi-select rows + bulk delete / reveal. Less
   obvious bulk operations (e.g. bulk host) probably aren't useful.
-- **Recently-hosted history.** Track which seeds were hosted and when
-  via Seed Browser, surface a "recently hosted" filter or column. State
-  lives in the same sidecar JSON used by tags.
 - **Multi-folder support.** Scan more than just AP's `output_path` —
   e.g. an `~/Documents/AP-seeds/` archive of finished games. Set via
   Seed Browser settings, not `host.yaml`.
 - **Re-generate seed** by invoking AP's Generate component on the
   original YAMLs (if discoverable from the multidata). Speculative —
   may not be feasible without manual YAML pointers.
+- **Deeper archipelago.gg integration.** The Quick-Wins "open browser"
+  button is the safe baseline. A scripted upload exists as a stretch:
+  POST to `/uploads` (the form route, no documented API) returns a
+  redirect to `/seed/<uuid>`; a follow-up GET on `/new_room/<uuid>`
+  redirects to `/host_room/<room_uuid>` — the URL players connect to.
+  Investigation 2026-05-15 (`WebHostLib/upload.py:171`,
+  `WebHostLib/misc.py:172`). Caveats: relies on a Flask session cookie
+  (anonymous uploads work but room ownership is ephemeral); the site
+  has upload size + rate limits set in their nginx/gunicorn config; no
+  endorsed API contract, so this is fragile across webhost changes.
+  Authenticated uploads tied to the user's archipelago.gg account
+  (GitHub OAuth / passwordless email) are high-effort and likely
+  brittle — defer indefinitely unless someone really wants it.
 
 ## Operational nice-to-haves
 
