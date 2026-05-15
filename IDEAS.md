@@ -10,18 +10,43 @@ gut-feel value, not commitment.
 the v1 UI just collapses it. A row-expansion would surface that for
 free, and is a stepping stone for everything below.
 
+**Multidata investigation (2026-05-15).** Decoded a real 2-slot seed via
+`Utils.restricted_loads`. Findings drive the items below:
+
+- The `slot_info` entries are `NetworkSlot(name, game, type, group_members)`.
+  We extract `name` and `game`; `type` (a `SlotType` enum: 0=spectator,
+  1=player, 2=group) and `group_members` are dropped on the floor today.
+- `payload["version"]` is the AP version that *generated* the seed
+  (e.g. `(0, 6, 7)`).
+- `payload["minimum_versions"]` carries `{'server': (M, m, p), 'clients':
+  {slot_num: (M, m, p), ...}}` — the AP versions required to host / play
+  this seed.
+- `payload["datapackage"]` is keyed by game name. Each value has a
+  `checksum` (SHA-1 fingerprint of the world's item/location tables) —
+  this is **not** a semver apworld version, it's a content hash. Useful
+  for a "the installed apworld matches the one used at generation"
+  compatibility check, less useful for human display on its own.
+- APWorld semver versions are **not** in the multidata. The closest
+  proxy is the datapackage checksum.
+- `payload["seed_name"]` equals the `AP_<digits>` filename id — nothing
+  new to surface there.
+
+Concrete features unlocked:
+
 - **Expandable rows.** Click a row to reveal per-slot detail. Each slot
-  line shows slot number, slot name, game, and whether a patch file is
-  present in the zip (we already track this implicitly).
-- **Datapackage / world versions.** Investigate what `payload` in
-  `_decode_slot_info` actually contains beyond `slot_info` — AP's
-  multidata has a `datapackage` dict with per-game `version` or
-  `checksum`. If those match the apworld's own version (varies per
-  world), surface them in the expanded row. Spike against a real
-  multi-game seed before committing to a UI.
-- **Seed name vs filename.** AP's multidata carries an internal
-  `seed_name` distinct from the `AP_<digits>.zip` filename. Show it
-  somewhere — at least in the expanded view.
+  line shows slot number, slot name, game, slot type (player / group /
+  spectator), and whether a patch file is present in the zip.
+- **Generator version label.** Show `payload["version"]` in the row or
+  the expanded view: `AP 0.6.7`. Cheap, broadly useful.
+- **Minimum-version hint.** When `minimum_versions["server"]` exceeds
+  the locally installed AP's version, flag it on the row ("requires AP
+  ≥ 0.5.0"). Avoid the user clicking Host on a seed their AP can't
+  actually run.
+- **Datapackage-checksum compatibility check.** Compare each game's
+  checksum against the locally loaded datapackage; flag mismatches in
+  the expanded slot row ("Jigsaw apworld differs from generation"). Hide
+  the raw SHA from the UI by default — it's only useful for
+  troubleshooting.
 
 ## Quick wins
 
