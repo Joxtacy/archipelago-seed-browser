@@ -11,7 +11,10 @@ import datetime
 import logging
 from pathlib import Path
 
+from . import actions
 from .scanner import Seed, scan_directory
+
+logger = logging.getLogger(__name__)
 
 
 def run(*args: str) -> None:
@@ -57,9 +60,9 @@ def _run_app(args: tuple[str, ...]) -> None:
     from kivymd.uix.boxlayout import MDBoxLayout
     from kivymd.uix.button import MDButton, MDButtonText
     from kivymd.uix.label import MDLabel
-    from kivymd.uix.list import MDList, MDListItem, MDListItemHeadlineText
+    from kivymd.uix.list import MDList
     from kivymd.uix.scrollview import MDScrollView
-    from kvui import ThemedApp
+    from kvui import ButtonsPrompt, ThemedApp
 
     output_dir = _resolve_output_dir()
 
@@ -125,19 +128,130 @@ def _run_app(args: tuple[str, ...]) -> None:
             self._list_widget.clear_widgets()
             seeds = scan_directory(output_dir)
             if not seeds:
-                self._list_widget.add_widget(
-                    MDListItem(
-                        MDListItemHeadlineText(
-                            text=f"No AP_*.zip seeds found in {output_dir}",
-                        )
+                empty_row = MDBoxLayout(
+                    orientation="horizontal",
+                    size_hint_y=None,
+                    height=dp(56),
+                    padding=(dp(16), 0),
+                )
+                empty_row.add_widget(
+                    MDLabel(
+                        text=f"No AP_*.zip seeds found in {output_dir}",
+                        halign="left",
+                        valign="center",
                     )
                 )
+                self._list_widget.add_widget(empty_row)
                 self._status_label.text = "0 seeds"
                 return
             for seed in seeds:
-                self._list_widget.add_widget(
-                    MDListItem(MDListItemHeadlineText(text=_format_seed_row(seed)))
-                )
+                self._list_widget.add_widget(self._build_seed_row(seed))
             self._status_label.text = f"{len(seeds)} seeds"
+
+        def _build_seed_row(self, seed: Seed) -> MDBoxLayout:
+            row = MDBoxLayout(
+                orientation="horizontal",
+                size_hint_y=None,
+                height=dp(64),
+                padding=(dp(16), 0),
+                spacing=dp(8),
+            )
+            row.add_widget(
+                MDLabel(
+                    text=_format_seed_row(seed),
+                    halign="left",
+                    valign="center",
+                )
+            )
+            row.add_widget(self._build_action_buttons(seed))
+            return row
+
+        def _build_action_buttons(self, seed: Seed) -> MDBoxLayout:
+            box = MDBoxLayout(
+                orientation="horizontal",
+                size_hint=(None, None),
+                width=dp(360),
+                height=dp(40),
+                spacing=dp(4),
+                pos_hint={"center_y": 0.5},
+            )
+            corrupt = seed.error is not None
+            box.add_widget(
+                self._action_button(
+                    "Host",
+                    lambda _btn, s=seed: self._do_action(actions.host_seed, s, "host"),
+                    disabled=corrupt or not seed.has_archipelago_file,
+                )
+            )
+            box.add_widget(
+                self._action_button(
+                    "Spoiler",
+                    lambda _btn, s=seed: self._do_action(actions.open_spoiler, s, "open spoiler"),
+                    disabled=not seed.has_spoiler,
+                )
+            )
+            box.add_widget(
+                self._action_button(
+                    "Reveal",
+                    lambda _btn, s=seed: self._do_action(
+                        actions.reveal_in_file_manager, s, "reveal"
+                    ),
+                )
+            )
+            box.add_widget(
+                self._action_button(
+                    "Delete",
+                    lambda _btn, s=seed: self._confirm_delete(s),
+                )
+            )
+            return box
+
+        def _action_button(
+            self, label: str, on_release: object, *, disabled: bool = False
+        ) -> MDButton:
+            btn = MDButton(
+                MDButtonText(text=label),
+                style="tonal",
+                size_hint=(None, None),
+                size=(dp(84), dp(40)),
+            )
+            btn.disabled = disabled
+            btn.bind(on_release=on_release)
+            return btn
+
+        def _do_action(self, fn, seed: Seed, label: str) -> None:
+            try:
+                fn(seed)
+            except Exception as e:  # noqa: BLE001  # surface errors, never crash app
+                logger.exception("%s failed for %s", label, seed.path)
+                assert self._status_label is not None
+                self._status_label.text = f"{label} failed: {e}"
+
+        def _confirm_delete(self, seed: Seed) -> None:
+            games = ", ".join(f"{c}×{g}" if c > 1 else g for g, c in seed.games) or "(unknown)"
+            dialog: ButtonsPrompt | None = None
+
+            def _response(label: str) -> None:
+                assert dialog is not None
+                dialog.dismiss()
+                if label != "Delete":
+                    return
+                try:
+                    actions.delete_seed(seed, confirmed=True)
+                except Exception as e:  # noqa: BLE001
+                    logger.exception("delete failed for %s", seed.path)
+                    assert self._status_label is not None
+                    self._status_label.text = f"delete failed: {e}"
+                    return
+                self._refresh()
+
+            dialog = ButtonsPrompt(
+                "Delete seed?",
+                f"{seed.path.name}\nGames: {games}",
+                _response,
+                "Cancel",
+                "Delete",
+            )
+            dialog.open()
 
     SeedBrowserApp().run()
