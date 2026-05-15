@@ -50,13 +50,19 @@ def _format_seed_row(seed: Seed) -> str:
     nslots = len(seed.slots)
     games_str = ", ".join(f"{count}×{game}" if count > 1 else game for game, count in seed.games)
     size_str = _format_size(seed.size_bytes)
-    spoiler = "  (spoiler)" if seed.has_spoiler else ""
+    parts = [ts, f"{nslots} slots", games_str, size_str]
+    if seed.has_spoiler:
+        parts.append("(spoiler)")
     if seed.has_save and seed.last_hosted is not None:
         hosted_ts = datetime.datetime.fromtimestamp(seed.last_hosted).strftime("%Y-%m-%d %H:%M")
-        hosted = f"  ·  hosted {hosted_ts}"
-    else:
-        hosted = ""
-    return f"{ts}  ·  {nslots} slots  ·  {games_str}  ·  {size_str}{spoiler}{hosted}"
+        parts.append(f"hosted {hosted_ts}")
+    return "  ·  ".join(parts)
+
+
+def _format_version(version: tuple[int, int, int] | None) -> str | None:
+    if version is None:
+        return None
+    return ".".join(str(p) for p in version)
 
 
 def _format_size(n: int) -> str:
@@ -130,6 +136,7 @@ def _run_app(args: tuple[str, ...]) -> None:
     from kivy.metrics import dp
     from kivymd.uix.boxlayout import MDBoxLayout
     from kivymd.uix.button import MDButton, MDButtonText
+    from kivymd.uix.card import MDCard
     from kivymd.uix.label import MDLabel
     from kivymd.uix.list import MDList
     from kivymd.uix.scrollview import MDScrollView
@@ -150,19 +157,31 @@ def _run_app(args: tuple[str, ...]) -> None:
             self._sort_desc: bool = True
             self._observer: object | None = None
             self._refresh_pending: bool = False
+            self._expanded: set[Path] = set()
+            """Paths of seeds whose detail panel is currently expanded.
+            Survives ``_refresh()`` so toggle state isn't lost on
+            re-scan."""
 
         def build(self) -> MDBoxLayout:
+            # Match the AP launcher's deep-navy backdrop. The default
+            # MDBoxLayout has no bg and reads as pure black against the
+            # window; using ``theme_cls.backgroundColor`` (the same hook
+            # the launcher's top_screen uses at Launcher.py:385) keeps
+            # us visually consistent with the rest of AP.
             root = MDBoxLayout(
                 orientation="vertical",
                 padding=dp(16),
                 spacing=dp(8),
+                md_bg_color=self.theme_cls.backgroundColor,
             )
 
             root.add_widget(self._build_header())
             root.add_widget(self._build_sort_bar())
 
             scroll = MDScrollView()
-            self._list_widget = MDList()
+            # Add inner spacing so seed-row cards visually separate from
+            # each other without needing dividers.
+            self._list_widget = MDList(spacing=dp(8), padding=(0, dp(4)))
             scroll.add_widget(self._list_widget)
             root.add_widget(scroll)
 
@@ -315,23 +334,114 @@ def _run_app(args: tuple[str, ...]) -> None:
             self._refresh_pending = False
             self._refresh()
 
-        def _build_seed_row(self, seed: Seed) -> MDBoxLayout:
-            row = MDBoxLayout(
+        def _build_seed_row(self, seed: Seed) -> MDCard:
+            has_details = bool(seed.slots) or seed.generator_version is not None
+            expanded = has_details and seed.path in self._expanded
+
+            # Card sits on top of the navy bg using the next surface
+            # tone up — same trick the launcher tiles use. Flat
+            # (elevation 0) so it reads as a row strip, not a chunky
+            # raised tile.
+            card = MDCard(
+                orientation="vertical",
+                size_hint_y=None,
+                height=dp(64),  # adjusted below if expanded
+                md_bg_color=self.theme_cls.surfaceContainerColor,
+                radius=[dp(8)],
+                elevation=0,
+                ripple_behavior=False,
+            )
+
+            header = MDBoxLayout(
                 orientation="horizontal",
                 size_hint_y=None,
                 height=dp(64),
                 padding=(dp(16), 0),
                 spacing=dp(8),
             )
-            row.add_widget(
+            if has_details:
+                header.add_widget(self._expand_button(seed, expanded))
+            header.add_widget(
                 MDLabel(
                     text=_format_seed_row(seed),
                     halign="left",
                     valign="center",
                 )
             )
-            row.add_widget(self._build_action_buttons(seed))
-            return row
+            header.add_widget(self._build_action_buttons(seed))
+            card.add_widget(header)
+
+            if expanded:
+                details = self._build_details_panel(seed)
+                card.add_widget(details)
+                card.height = dp(64) + details.height + dp(8)
+
+            return card
+
+        def _expand_button(self, seed: Seed, expanded: bool) -> MDButton:
+            btn = MDButton(
+                MDButtonText(
+                    text="-" if expanded else "+",
+                    font_style="Title",
+                    role="large",
+                ),
+                style="tonal",
+                size_hint=(None, None),
+                size=(dp(56), dp(48)),
+                pos_hint={"center_y": 0.5},
+            )
+            btn.bind(on_release=lambda _btn, s=seed: self._toggle_expanded(s))
+            return btn
+
+        def _toggle_expanded(self, seed: Seed) -> None:
+            if seed.path in self._expanded:
+                self._expanded.discard(seed.path)
+            else:
+                self._expanded.add(seed.path)
+            self._refresh()
+
+        def _build_details_panel(self, seed: Seed) -> MDBoxLayout:
+            slot_line_h = dp(24)
+            footer_h = dp(28)
+            has_footer = (
+                seed.generator_version is not None or seed.min_server_version is not None
+            )
+            n_slots = len(seed.slots)
+            panel_height = n_slots * slot_line_h + (footer_h if has_footer else 0) + dp(8)
+
+            panel = MDBoxLayout(
+                orientation="vertical",
+                size_hint_y=None,
+                height=panel_height,
+                padding=(dp(72), dp(4), dp(16), dp(8)),
+                spacing=dp(2),
+            )
+            for slot_num, slot_name, game in seed.slots:
+                slot_type = seed.slot_types.get(slot_num, "player")
+                patch = seed.slot_patches.get(slot_num)
+                patch_marker = f"  [{patch}]" if patch else ""
+                panel.add_widget(
+                    MDLabel(
+                        text=f"Slot {slot_num} — {slot_name}  ({game}, {slot_type}){patch_marker}",
+                        halign="left",
+                        valign="middle",
+                        size_hint_y=None,
+                        height=slot_line_h,
+                    )
+                )
+            if has_footer:
+                gen = _format_version(seed.generator_version) or "?"
+                minsrv = _format_version(seed.min_server_version) or "?"
+                panel.add_widget(
+                    MDLabel(
+                        text=f"Generated by AP {gen}  ·  Requires server ≥ AP {minsrv}",
+                        halign="left",
+                        valign="middle",
+                        size_hint_y=None,
+                        height=footer_h,
+                    )
+                )
+            return panel
 
         def _build_action_buttons(self, seed: Seed) -> MDBoxLayout:
             box = MDBoxLayout(

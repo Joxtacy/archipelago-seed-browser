@@ -16,7 +16,9 @@ import pytest
 
 from seed_browser.scanner import (
     Seed,
+    _coerce_version,
     _collapse_games,
+    _extract_slot_patches,
     scan_directory,
     scan_seed,
 )
@@ -163,6 +165,52 @@ def test_scan_seed_falls_back_to_filesystem_mtime_when_no_archipelago(
     os.utime(p, (1_700_000_000, 1_700_000_000))
     seed = scan_seed(p)
     assert seed.mtime == 1_700_000_000.0
+
+
+def test_extract_slot_patches_picks_up_per_slot_suffixes() -> None:
+    """Patch entries match ``AP_<seed_id>_P<slot>_<player>.<suffix>``;
+    spoiler and multidata entries don't have the ``_P<digit>_`` and must
+    be skipped."""
+    names = [
+        "AP_12345.archipelago",
+        "AP_12345_Spoiler.txt",
+        "AP_12345_P1_Jox.apmc",
+        "AP_12345_P3_Bob.aplttp",
+    ]
+    assert _extract_slot_patches(names) == {1: ".apmc", 3: ".aplttp"}
+
+
+def test_extract_slot_patches_handles_dotted_player_names() -> None:
+    """Player names may contain dots — the regex uses a non-greedy
+    final-segment match for the suffix."""
+    assert _extract_slot_patches(["AP_99_P2_A.B.C.apmc"]) == {2: ".apmc"}
+
+
+def test_extract_slot_patches_skips_non_seed_files() -> None:
+    """Names without the ``AP_<digits>_P<digit>`` prefix are not patches."""
+    assert _extract_slot_patches(["random.txt", "AP_99.archipelago"]) == {}
+
+
+def test_scan_seed_extracts_slot_patches_even_when_multidata_fails(tmp_path: Path) -> None:
+    """Patches come from the namelist, not the multidata blob. Decode
+    failure must not erase the patch mapping."""
+    p = tmp_path / "AP_30000.zip"
+    with zipfile.ZipFile(p, "w") as zf:
+        zf.writestr("AP_30000.archipelago", b"")  # decode will fail
+        zf.writestr("AP_30000_P1_Jox.apmc", b"patch")
+    seed = scan_seed(p)
+    assert seed.error  # multidata decode failed
+    assert seed.slot_patches == {1: ".apmc"}  # but patches still surfaced
+
+
+def test_coerce_version_round_trips_a_three_tuple() -> None:
+    assert _coerce_version((0, 6, 7)) == (0, 6, 7)
+
+
+def test_coerce_version_returns_none_for_garbage() -> None:
+    assert _coerce_version(None) is None
+    assert _coerce_version("not-a-tuple") is None
+    assert _coerce_version((1, 2)) is None  # wrong shape
 
 
 def test_collapse_games_preserves_first_seen_order() -> None:

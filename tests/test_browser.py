@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from seed_browser.browser import sort_seeds
+from seed_browser.browser import _format_seed_row, _format_version, sort_seeds
 from seed_browser.scanner import Seed
 
 
@@ -104,6 +104,31 @@ def test_sort_seeds_hosted_unhosted_block_ordered_by_mtime_desc() -> None:
         "a-newer",
         "b-older",
     ]
+
+
+def test_format_version_renders_dotted_string() -> None:
+    assert _format_version((0, 6, 7)) == "0.6.7"
+
+
+def test_format_version_handles_missing() -> None:
+    assert _format_version(None) is None
+
+
+def test_format_seed_row_does_not_include_generator_version() -> None:
+    """Generator version lives in the expanded panel only; the
+    collapsed row stays compact."""
+    seed = Seed(
+        path=Path("/tmp/AP_42.zip"),
+        mtime=1_700_000_000.0,
+        size_bytes=34_500,
+        slots=[(1, "P1", "Jigsaw"), (2, "P2", "Minecraft")],
+        games=[("Jigsaw", 1), ("Minecraft", 1)],
+        generator_version=(0, 6, 7),
+    )
+    label = _format_seed_row(seed)
+    assert "AP " not in label
+    assert "0.6.7" not in label
+    assert "2 slots" in label
 
 
 def test_sort_seeds_does_not_mutate_input() -> None:
