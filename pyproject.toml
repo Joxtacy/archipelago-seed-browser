@@ -1,6 +1,6 @@
 [project]
 name = "archipelago-seed-browser"
-version = "1.3.1"
+version = "1.4.0"
 description = "Archipelago Launcher add-on that lists locally generated multiworld seeds."
 readme = "README.md"
 license = { text = "MIT" }
