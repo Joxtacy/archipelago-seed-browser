@@ -39,13 +39,16 @@ not allowed. Update `world_version` only on stable tags (e.g. `1.0.0`,
    ```
 3. **Wait for CI to go green** on that commit. The release workflow re-runs
    tests, but a broken `main` is a faster signal.
-4. **Tag the commit:**
+4. **Tag the commit.** jj 0.41+ has native tag commands; in a
+   colocated repo they write straight to the git tag store, so
+   subsequent `git push` sees them:
    ```sh
-   git tag v1.0.0 <commit-sha>
-   git push origin v1.0.0
+   jj tag set v1.0.0 -r <change-id-or-commit>
+   git push origin v1.0.0      # jj git push doesn't push tags yet
    ```
-   (jj's bookmark/tag model differs from git's. Easiest path is to drop to
-   `git tag` directly in the colocated repo — `jj` will pick it up.)
+   `jj tag list` shows all tags (jj-created or git-created). Use
+   `jj tag delete v1.0.0` to remove a local tag; push with
+   `git push origin :refs/tags/v1.0.0` to remove the remote one.
 5. **Watch the workflow:**
    ```sh
    gh run watch --repo Joxtacy/archipelago-seed-browser --exit-status
