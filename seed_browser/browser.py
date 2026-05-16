@@ -421,7 +421,8 @@ def _run_app(args: tuple[str, ...]) -> None:
                 return
 
             try:
-                self._seeds_cache = scan_directory(output_dir)
+                prior = {s.path: s for s in self._seeds_cache}
+                self._seeds_cache = scan_directory(output_dir, cache=prior)
             except OSError as e:
                 self._seeds_cache = []
                 self._show_message(

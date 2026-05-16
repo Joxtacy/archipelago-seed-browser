@@ -106,6 +106,60 @@ def test_scan_directory_filters_non_seed_files(tmp_path: Path) -> None:
     assert [s.path.name for s in seeds] == ["AP_42.zip"]
 
 
+def test_scan_directory_reuses_cached_seed_when_mtimes_match(tmp_path: Path) -> None:
+    """Second pass over an unchanged folder must reuse the cached Seed
+    objects — re-decoding multidata for every refresh is the main
+    performance cost we're trying to avoid."""
+    p = tmp_path / "AP_111.zip"
+    _write_seed_zip(p, "111")
+    first = scan_directory(tmp_path)
+    cache = {s.path: s for s in first}
+    second = scan_directory(tmp_path, cache=cache)
+    # Identity check — the cached object must be returned verbatim, not
+    # a freshly-decoded equivalent.
+    assert second[0] is first[0]
+
+
+def test_scan_directory_rescans_when_zip_mtime_changes(tmp_path: Path) -> None:
+    p = tmp_path / "AP_222.zip"
+    _write_seed_zip(p, "222")
+    first = scan_directory(tmp_path)
+    cache = {s.path: s for s in first}
+    os.utime(p, (3_000_000_000, 3_000_000_000))
+    second = scan_directory(tmp_path, cache=cache)
+    assert second[0] is not first[0]
+
+
+def test_scan_directory_rescans_when_save_appears(tmp_path: Path) -> None:
+    """A newly-written ``.apsave`` must invalidate the cache so the
+    expanded panel can show progress info instead of staying stale."""
+    p = tmp_path / "AP_333.zip"
+    _write_seed_zip(p, "333")
+    first = scan_directory(tmp_path)
+    cache = {s.path: s for s in first}
+    assert first[0].has_save is False
+
+    (tmp_path / "AP_333.apsave").write_bytes(b"unreadable save")
+    second = scan_directory(tmp_path, cache=cache)
+    assert second[0] is not first[0]
+    assert second[0].has_save is True
+
+
+def test_scan_directory_rescans_when_save_mtime_changes(tmp_path: Path) -> None:
+    p = tmp_path / "AP_444.zip"
+    _write_seed_zip(p, "444")
+    save = tmp_path / "AP_444.apsave"
+    save.write_bytes(b"old save")
+    os.utime(save, (1_700_000_000, 1_700_000_000))
+
+    first = scan_directory(tmp_path)
+    cache = {s.path: s for s in first}
+    os.utime(save, (1_750_000_000, 1_750_000_000))
+    second = scan_directory(tmp_path, cache=cache)
+    assert second[0] is not first[0]
+    assert second[0].last_hosted == 1_750_000_000.0
+
+
 def test_scan_directory_missing_folder(tmp_path: Path) -> None:
     """Listing a nonexistent dir returns an empty list, not a crash."""
     seeds = scan_directory(tmp_path / "does-not-exist")

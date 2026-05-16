@@ -81,6 +81,10 @@ class Seed:
     time the server shut down and flushed state). ``None`` when the
     seed has never been hosted."""
     error: str | None = None
+    _file_mtime: float = 0.0
+    """Filesystem mtime of the seed zip at scan time. Used by
+    :func:`scan_directory` to validate cache entries — distinct from
+    :attr:`mtime`, which prefers the zip-internal date_time."""
 
 
 @dataclass(slots=True)
@@ -105,7 +109,12 @@ def scan_seed(path: Path) -> Seed:
     except OSError as e:
         return Seed(path=path, mtime=0.0, size_bytes=0, error=str(e))
 
-    seed = Seed(path=path, mtime=stat.st_mtime, size_bytes=stat.st_size)
+    seed = Seed(
+        path=path,
+        mtime=stat.st_mtime,
+        size_bytes=stat.st_size,
+        _file_mtime=stat.st_mtime,
+    )
     try:
         with zipfile.ZipFile(path) as zf:
             names = zf.namelist()
@@ -203,20 +212,64 @@ def _decode_save(path: Path) -> dict:
     return payload
 
 
-def scan_directory(folder: Path) -> list[Seed]:
+def scan_directory(
+    folder: Path, cache: dict[Path, Seed] | None = None
+) -> list[Seed]:
     """Return seeds in *folder* sorted by mtime descending.
 
     Non-``AP_<id>.zip`` files are skipped. Unreadable folders yield an
     empty list (logged at warning).
+
+    When *cache* is supplied (typically the previous scan's result keyed
+    by ``Seed.path``), entries whose zip mtime and ``.apsave`` mtime
+    both match the cached values are reused verbatim — the expensive
+    multidata + save decode is skipped. Re-decoding only happens when
+    something actually changed on disk.
     """
     try:
         entries = list(folder.iterdir())
     except OSError as e:
         logger.warning("cannot list %s: %s", folder, e)
         return []
-    seeds = [scan_seed(p) for p in entries if p.is_file() and _SEED_FILE_RE.match(p.name)]
+
+    seeds: list[Seed] = []
+    for p in entries:
+        if not (p.is_file() and _SEED_FILE_RE.match(p.name)):
+            continue
+        seeds.append(_scan_with_cache(p, cache))
     seeds.sort(key=lambda s: s.mtime, reverse=True)
     return seeds
+
+
+def _scan_with_cache(path: Path, cache: dict[Path, Seed] | None) -> Seed:
+    """Return a cached :class:`Seed` for *path* when the on-disk mtimes
+    match, otherwise delegate to :func:`scan_seed`.
+
+    The save's mtime is read separately from the zip's because the two
+    files change independently — the zip is written once at generation,
+    the ``.apsave`` is rewritten every time MultiServer flushes.
+    """
+    if cache is None:
+        return scan_seed(path)
+    cached = cache.get(path)
+    if cached is None:
+        return scan_seed(path)
+    try:
+        file_mtime = path.stat().st_mtime
+    except OSError:
+        return scan_seed(path)
+    if cached._file_mtime != file_mtime:
+        return scan_seed(path)
+    save_path = path.with_suffix(".apsave")
+    try:
+        save_mtime: float | None = save_path.stat().st_mtime
+    except FileNotFoundError:
+        save_mtime = None
+    except OSError:
+        return scan_seed(path)
+    if cached.last_hosted != save_mtime:
+        return scan_seed(path)
+    return cached
 
 
 def _extract_slot_patches(names: list[str]) -> dict[int, str]:
