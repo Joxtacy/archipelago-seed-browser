@@ -35,6 +35,10 @@ _MAX_MULTIDATA_FORMAT = 3
 # importing the enum keeps us decoupled from AP's import path.
 _SLOT_TYPE_NAMES: dict[int, str] = {0: "spectator", 1: "player", 2: "group"}
 
+# NetUtils.ClientStatus.CLIENT_GOAL — the slot has reached its goal.
+# Hardcoded to keep us decoupled from AP's import path.
+_CLIENT_STATUS_GOAL = 30
+
 
 @dataclass(slots=True)
 class Seed:
@@ -51,6 +55,17 @@ class Seed:
     """``{slot_num: '.apmc'}`` — patch suffix per slot inferred from the
     zip namelist. Absent entries mean the slot is server-only or its
     patch file is missing from the zip."""
+    slot_totals: dict[int, int] = field(default_factory=dict)
+    """``{slot_num: total_locations}`` — total checks per slot from the
+    multidata's ``locations`` map."""
+    slot_checked: dict[int, int] = field(default_factory=dict)
+    """``{slot_num: checked_count}`` — locations the player has
+    checked, decoded from the sibling ``.apsave``. Empty when the seed
+    hasn't been hosted, or when save decode fails."""
+    slot_complete: dict[int, bool] = field(default_factory=dict)
+    """``{slot_num: True}`` for slots that reported
+    ``ClientStatus.CLIENT_GOAL`` (30) in the save. Absent / False means
+    the slot hasn't reached its goal (or no save exists)."""
     generator_version: tuple[int, int, int] | None = None
     """AP version that generated this seed (``payload['version']``)."""
     min_server_version: tuple[int, int, int] | None = None
@@ -75,6 +90,8 @@ class _MultidataInfo:
     """``{slot_num: (slot_name, game, slot_type_int)}``"""
     version: tuple[int, int, int] | None
     min_server_version: tuple[int, int, int] | None
+    slot_totals: dict[int, int]
+    """``{slot_num: total_locations}``"""
 
 
 def scan_seed(path: Path) -> Seed:
@@ -114,6 +131,7 @@ def scan_seed(path: Path) -> Seed:
                 seed.games = _collapse_games(seed.slots)
                 seed.generator_version = info.version
                 seed.min_server_version = info.min_server_version
+                seed.slot_totals = info.slot_totals
     except zipfile.BadZipFile as e:
         seed.error = f"corrupt zip: {e}"
     except (OSError, ValueError, KeyError) as e:
@@ -128,10 +146,13 @@ def scan_seed(path: Path) -> Seed:
 
 def _populate_save_info(seed: Seed) -> None:
     """Detect a sibling ``<seed_id>.apsave`` written by MultiServer at
-    ``MultiServer.py:613`` and populate ``has_save`` / ``last_hosted``.
+    ``MultiServer.py:613`` and populate ``has_save`` / ``last_hosted``,
+    plus tiers 3-4 (per-slot progress + completion) when the save can
+    be decoded.
 
-    Stat failures (permissions, weird FS) are non-fatal — we just leave
-    the fields at their defaults.
+    All failures are non-fatal: ``has_save`` is set as soon as the file
+    exists, the rest stay at their defaults if decode fails. The save
+    schema is internal AP state — log on failure and move on.
     """
     save_path = seed.path.with_suffix(".apsave")
     try:
@@ -143,6 +164,43 @@ def _populate_save_info(seed: Seed) -> None:
         return
     seed.has_save = True
     seed.last_hosted = save_stat.st_mtime
+
+    try:
+        save_data = _decode_save(save_path)
+    except (OSError, zlib.error, ValueError, KeyError, AttributeError):
+        logger.warning("cannot decode save %s", save_path, exc_info=True)
+        return
+    except Exception:  # noqa: BLE001  # never crash the launcher
+        logger.exception("unexpected error decoding save %s", save_path)
+        return
+
+    # Multi-team support isn't worth the UI complexity at this tier;
+    # take team 0 (the common case for solo and single-machine play).
+    location_checks = save_data.get("location_checks", {}) or {}
+    for key, checks in location_checks.items():
+        team, slot = key
+        if team == 0:
+            seed.slot_checked[int(slot)] = len(checks)
+    client_game_state = save_data.get("client_game_state", {}) or {}
+    for key, status in client_game_state.items():
+        team, slot = key
+        if team == 0:
+            seed.slot_complete[int(slot)] = int(status) == _CLIENT_STATUS_GOAL
+
+
+def _decode_save(path: Path) -> dict:
+    """Decode ``<seed_id>.apsave`` — zlib-compressed pickle written by
+    ``MultiServer._save``. Delegates to AP's ``restricted_loads`` so
+    the unpickler stays sandboxed to AP's known class whitelist.
+    """
+    from Utils import restricted_loads
+
+    with open(path, "rb") as f:
+        raw = f.read()
+    payload = restricted_loads(zlib.decompress(raw))
+    if not isinstance(payload, dict):
+        raise ValueError(f"save payload is not a dict (got {type(payload).__name__})")
+    return payload
 
 
 def scan_directory(folder: Path) -> list[Seed]:
@@ -195,10 +253,16 @@ def _decode_multidata(blob: bytes) -> _MultidataInfo:
     }
     version = _coerce_version(payload.get("version"))
     minimum_versions = payload.get("minimum_versions") or {}
+    # locations: dict[slot_num, dict[location_id, ...]] — verified
+    # against a real seed. Slot-keyed (not team-keyed) at the multidata
+    # level; teams come in via the save file's location_checks.
+    locations = payload.get("locations") or {}
+    slot_totals = {int(slot): len(inner) for slot, inner in locations.items()}
     return _MultidataInfo(
         slot_info=slot_info,
         version=version,
         min_server_version=_coerce_version(minimum_versions.get("server")),
+        slot_totals=slot_totals,
     )
 
 

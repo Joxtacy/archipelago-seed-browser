@@ -155,6 +155,21 @@ def test_scan_seed_without_apsave_reports_unhosted(tmp_path: Path) -> None:
     assert seed.last_hosted is None
 
 
+def test_scan_seed_marks_hosted_even_when_save_decode_fails(tmp_path: Path) -> None:
+    """A corrupt ``.apsave`` is still a 'this seed has been hosted'
+    signal — the existence of the file tells us MultiServer ran. We
+    just can't fill tier 3-4 (per-slot progress / completion)."""
+    p = tmp_path / "AP_60000.zip"
+    _write_seed_zip(p, "60000")
+    save = tmp_path / "AP_60000.apsave"
+    save.write_bytes(b"definitely not a zlib stream")
+    seed = scan_seed(p)
+    assert seed.has_save is True
+    assert seed.last_hosted is not None
+    assert seed.slot_checked == {}
+    assert seed.slot_complete == {}
+
+
 def test_scan_seed_falls_back_to_filesystem_mtime_when_no_archipelago(
     tmp_path: Path,
 ) -> None:

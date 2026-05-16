@@ -66,6 +66,32 @@ def _format_version(version: tuple[int, int, int] | None) -> str | None:
     return ".".join(str(p) for p in version)
 
 
+def _format_slot_progress(seed: Seed, slot_num: int) -> str:
+    """Render the ' · N/M checks · done' suffix for a per-slot row.
+
+    Returns an empty string if we have nothing to say (no save, no
+    totals). Pure helper — extracted for testing.
+
+    Once ``has_save`` is True we surface ``0/N`` even for slots whose
+    client never connected — otherwise the row asymmetrically omits the
+    unplayed slots and reads as if we're missing data.
+    """
+    parts: list[str] = []
+    checked = seed.slot_checked.get(slot_num)
+    total = seed.slot_totals.get(slot_num)
+    if total is not None and seed.has_save:
+        parts.append(f"{checked or 0}/{total} checks")
+    elif checked is not None and total is not None:
+        parts.append(f"{checked}/{total} checks")
+    elif checked is not None:
+        parts.append(f"{checked} checks")
+    if seed.slot_complete.get(slot_num):
+        parts.append("done")
+    if not parts:
+        return ""
+    return "  ·  " + "  ·  ".join(parts)
+
+
 def _format_size(n: int) -> str:
     units = ("B", "KB", "MB", "GB", "TB")
     size = float(n)
@@ -513,9 +539,13 @@ def _run_app(args: tuple[str, ...]) -> None:
                 slot_type = seed.slot_types.get(slot_num, "player")
                 patch = seed.slot_patches.get(slot_num)
                 patch_marker = f"  [{patch}]" if patch else ""
+                progress_marker = _format_slot_progress(seed, slot_num)
                 panel.add_widget(
                     MDLabel(
-                        text=f"Slot {slot_num} — {slot_name}  ({game}, {slot_type}){patch_marker}",
+                        text=(
+                            f"Slot {slot_num} — {slot_name}  "
+                            f"({game}, {slot_type}){patch_marker}{progress_marker}"
+                        ),
                         halign="left",
                         valign="middle",
                         size_hint_y=None,

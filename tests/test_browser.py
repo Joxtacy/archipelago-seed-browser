@@ -10,6 +10,7 @@ from pathlib import Path
 
 from seed_browser.browser import (
     _format_seed_row,
+    _format_slot_progress,
     _format_version,
     filter_seeds,
     sort_seeds,
@@ -218,6 +219,76 @@ def test_filter_seeds_matches_slot_or_player_name() -> None:
 def test_filter_seeds_returns_empty_when_nothing_matches() -> None:
     a = _seed("AP_55.zip", mtime=1.0, size=10, slots=1, game="Minecraft")
     assert filter_seeds([a], "nothing-this-rare") == []
+
+
+def test_format_slot_progress_empty_when_no_save_data() -> None:
+    seed = Seed(path=Path("/tmp/a"), mtime=1.0, size_bytes=10, slot_totals={1: 87})
+    # We know the total but the seed hasn't been hosted — nothing to
+    # display per-slot.
+    assert _format_slot_progress(seed, 1) == ""
+
+
+def test_format_slot_progress_shows_zero_n_for_unplayed_slot_in_hosted_seed() -> None:
+    """Once a seed has been hosted, every slot with a known total
+    surfaces '0/N checks' even if the slot's client never connected —
+    keeps the per-slot display consistent across the whole seed."""
+    seed = Seed(
+        path=Path("/tmp/a"),
+        mtime=1.0,
+        size_bytes=10,
+        has_save=True,
+        slot_totals={1: 87, 2: 50},
+        slot_checked={1: 12},  # only slot 1 has any saved progress
+    )
+    assert _format_slot_progress(seed, 1) == "  ·  12/87 checks"
+    assert _format_slot_progress(seed, 2) == "  ·  0/50 checks"
+
+
+def test_format_slot_progress_renders_fraction_when_both_known() -> None:
+    seed = Seed(
+        path=Path("/tmp/a"),
+        mtime=1.0,
+        size_bytes=10,
+        slot_totals={1: 87},
+        slot_checked={1: 12},
+    )
+    assert _format_slot_progress(seed, 1) == "  ·  12/87 checks"
+
+
+def test_format_slot_progress_omits_total_when_unknown() -> None:
+    """Total comes from multidata, checked from the save. If multidata
+    decode failed but a save still exists, fall back to just the count."""
+    seed = Seed(
+        path=Path("/tmp/a"),
+        mtime=1.0,
+        size_bytes=10,
+        slot_checked={1: 5},
+    )
+    assert _format_slot_progress(seed, 1) == "  ·  5 checks"
+
+
+def test_format_slot_progress_appends_done_marker_on_completion() -> None:
+    seed = Seed(
+        path=Path("/tmp/a"),
+        mtime=1.0,
+        size_bytes=10,
+        slot_totals={1: 87},
+        slot_checked={1: 87},
+        slot_complete={1: True},
+    )
+    assert _format_slot_progress(seed, 1) == "  ·  87/87 checks  ·  done"
+
+
+def test_format_slot_progress_done_without_check_counts() -> None:
+    """A slot can report goal status even if location_checks is empty
+    (e.g. game completion that isn't location-driven)."""
+    seed = Seed(
+        path=Path("/tmp/a"),
+        mtime=1.0,
+        size_bytes=10,
+        slot_complete={1: True},
+    )
+    assert _format_slot_progress(seed, 1) == "  ·  done"
 
 
 def test_sort_seeds_does_not_mutate_input() -> None:
