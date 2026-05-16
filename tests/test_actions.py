@@ -86,9 +86,7 @@ def test_delete_seed_uses_send2trash_when_available(
 def test_macos_terminal_command_quotes_paths_with_spaces() -> None:
     """Spaces in paths must round-trip through shell quoting *and*
     AppleScript string escaping unscathed."""
-    cmd = _macos_terminal_command(
-        ["/usr/bin/python3", "/Apps/MultiServer.py", "/seeds/AP 1.zip"]
-    )
+    cmd = _macos_terminal_command(["/usr/bin/python3", "/Apps/MultiServer.py", "/seeds/AP 1.zip"])
     assert cmd[:2] == ["osascript", "-e"]
     script = cmd[2]
     # AppleScript "do script" gets the shell command as a literal string.

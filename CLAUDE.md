@@ -125,7 +125,9 @@ let UI handlers raise.
 ## Conventions
 
 - Ruff is configured with `line-length = 100`, `target-version = "py311"`,
-  selects `E,F,I,B,UP`. Run before committing.
+  selects `E,F,I,B,UP`. Before committing, run both
+  `uv run ruff format` (to apply formatting) and `uv run ruff check`
+  (to catch lint). `check` alone won't reformat code.
 - `from __future__ import annotations` is used throughout — keep it on
   new modules.
 - Dataclasses use `slots=True`.

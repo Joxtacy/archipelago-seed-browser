@@ -90,6 +90,7 @@ class Seed:
 @dataclass(slots=True)
 class _MultidataInfo:
     """Internal: what we extract from a successfully decoded multidata blob."""
+
     slot_info: dict[int, tuple[str, str, int]]
     """``{slot_num: (slot_name, game, slot_type_int)}``"""
     version: tuple[int, int, int] | None

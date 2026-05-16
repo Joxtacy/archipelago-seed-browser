@@ -474,7 +474,6 @@ def test_filter_by_state_complete_picks_only_finished_seeds() -> None:
         last_hosted=100.0,
     )
     untouched = Seed(path=Path("/tmp/raw"), mtime=3.0, size_bytes=10)
-    assert [s.path.name for s in filter_by_state(
-        [done, in_flight, untouched], "complete"
-    )] == ["done"]
-
+    assert [s.path.name for s in filter_by_state([done, in_flight, untouched], "complete")] == [
+        "done"
+    ]

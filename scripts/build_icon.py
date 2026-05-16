@@ -27,12 +27,11 @@ def _in_rounded_square(x: int, y: int) -> bool:
         # actually outside the rounded corner region (inside the rectangle
         # but outside the inscribed circle's quadrant)
         dx, dy = x - cx, y - cy
-        if (cx <= r and cy <= r and dx <= 0 and dy <= 0) or (
-            cx >= W - r - 1 and cy <= r and dx >= 0 and dy <= 0
-        ) or (
-            cx <= r and cy >= H - r - 1 and dx <= 0 and dy >= 0
-        ) or (
-            cx >= W - r - 1 and cy >= H - r - 1 and dx >= 0 and dy >= 0
+        if (
+            (cx <= r and cy <= r and dx <= 0 and dy <= 0)
+            or (cx >= W - r - 1 and cy <= r and dx >= 0 and dy <= 0)
+            or (cx <= r and cy >= H - r - 1 and dx <= 0 and dy >= 0)
+            or (cx >= W - r - 1 and cy >= H - r - 1 and dx >= 0 and dy >= 0)
         ):
             if dx * dx + dy * dy > r * r:
                 return False

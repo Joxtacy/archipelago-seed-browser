@@ -115,9 +115,7 @@ def extract_slot_patch(seed: Seed, slot_num: int) -> Path:
             None,
         )
         if entry is None:
-            raise FileNotFoundError(
-                f"no patch entry for slot {slot_num} in {seed.path.name}"
-            )
+            raise FileNotFoundError(f"no patch entry for slot {slot_num} in {seed.path.name}")
         # Strip any zip-internal path so we always write a flat file
         # alongside the seed zip, not into a subdir.
         destination = seed.path.parent / Path(entry).name
@@ -179,5 +177,3 @@ def _reveal_command(path: Path, platform: str) -> list[str]:
     if platform.startswith("win"):
         return ["explorer", f"/select,{path}"]
     return ["xdg-open", str(path.parent)]
-
-

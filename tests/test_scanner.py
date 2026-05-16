@@ -165,9 +165,7 @@ def test_scan_directory_parallel_matches_sequential(tmp_path: Path) -> None:
     same order as the sequential path — parallelism is an internal
     detail, not a behavior change."""
     for i in range(6):
-        _write_seed_with_zip_date(
-            tmp_path / f"AP_{i}.zip", str(i), (2024, 1, 1 + i, 0, 0, 0)
-        )
+        _write_seed_with_zip_date(tmp_path / f"AP_{i}.zip", str(i), (2024, 1, 1 + i, 0, 0, 0))
     sequential = scan_directory(tmp_path)
     parallel = scan_directory(tmp_path, workers=4)
     assert [s.path.name for s in parallel] == [s.path.name for s in sequential]

@@ -550,13 +550,9 @@ def _run_app(args: tuple[str, ...]) -> None:
             except Exception as e:  # noqa: BLE001  # never crash the launcher
                 logger.exception("seed scan failed")
                 err = e
-            Clock.schedule_once(
-                lambda _dt: self._on_scan_complete(gen, seeds, err), 0
-            )
+            Clock.schedule_once(lambda _dt: self._on_scan_complete(gen, seeds, err), 0)
 
-        def _on_scan_complete(
-            self, gen: int, seeds: list[Seed], err: Exception | None
-        ) -> None:
+        def _on_scan_complete(self, gen: int, seeds: list[Seed], err: Exception | None) -> None:
             if gen != self._scan_gen:
                 return  # a newer scan has already started; drop this result
             assert self._list_widget is not None
@@ -602,9 +598,7 @@ def _run_app(args: tuple[str, ...]) -> None:
             # model: "show me hosted seeds called minecraft".
             visible = filter_by_state(self._seeds_cache, self._state_filter)
             visible = filter_seeds(visible, self._filter_text)
-            sorted_visible = sort_seeds(
-                visible, key=self._sort_key, desc=self._sort_desc
-            )
+            sorted_visible = sort_seeds(visible, key=self._sort_key, desc=self._sort_desc)
             total = len(self._seeds_cache)
 
             if not sorted_visible:
@@ -644,9 +638,7 @@ def _run_app(args: tuple[str, ...]) -> None:
             text = self._filter_text.strip()
             state = self._state_filter
             if text and state != "all":
-                return (
-                    f"No {_STATE_LABELS[state].lower()} seeds match '{text}'"
-                )
+                return f"No {_STATE_LABELS[state].lower()} seeds match '{text}'"
             if text:
                 return f"No seeds match '{text}'"
             if state != "all":
@@ -768,11 +760,7 @@ def _run_app(args: tuple[str, ...]) -> None:
             footer_line_h = dp(24)
             footer_lines = _format_seed_footer_lines(seed)
             n_slots = len(seed.slots)
-            panel_height = (
-                n_slots * slot_line_h
-                + len(footer_lines) * footer_line_h
-                + dp(8)
-            )
+            panel_height = n_slots * slot_line_h + len(footer_lines) * footer_line_h + dp(8)
 
             panel = MDBoxLayout(
                 orientation="vertical",
@@ -827,9 +815,7 @@ def _run_app(args: tuple[str, ...]) -> None:
                     size=(dp(148), dp(32)),
                     pos_hint={"center_y": 0.5},
                 )
-                btn.bind(
-                    on_release=lambda _btn, s=seed, n=slot_num: self._extract_patch(s, n)
-                )
+                btn.bind(on_release=lambda _btn, s=seed, n=slot_num: self._extract_patch(s, n))
                 row.add_widget(btn)
             return row
 
@@ -838,9 +824,7 @@ def _run_app(args: tuple[str, ...]) -> None:
             try:
                 dest = actions.extract_slot_patch(seed, slot_num)
             except Exception as e:  # noqa: BLE001  # surface, never crash
-                logger.exception(
-                    "extract patch failed for slot %s in %s", slot_num, seed.path
-                )
+                logger.exception("extract patch failed for slot %s in %s", slot_num, seed.path)
                 self._status_label.text = f"extract failed: {e}"
                 return
             self._status_label.text = f"extracted slot {slot_num} to {dest}"
