@@ -27,6 +27,15 @@ _SORT_LABELS: dict[SortKey, str] = {
     "game": "Game",
 }
 
+SeedState = Literal["untouched", "in_progress", "complete"]
+StateFilter = Literal["all", "untouched", "in_progress", "complete"]
+_STATE_LABELS: dict[StateFilter, str] = {
+    "all": "All",
+    "untouched": "Untouched",
+    "in_progress": "In progress",
+    "complete": "Complete",
+}
+
 
 def run(*args: str) -> None:
     """Entry point invoked by the launcher subprocess."""
@@ -131,6 +140,35 @@ def _format_size(n: int) -> str:
             return f"{int(size)} {unit}" if unit == "B" else f"{size:.1f} {unit}"
         size /= 1024.0
     return f"{size:.1f} {units[-1]}"
+
+
+def seed_state(seed: Seed) -> SeedState:
+    """Bucket a seed into one of three mutually-exclusive UX states.
+
+    - ``"untouched"`` — no ``.apsave`` exists, so MultiServer has never
+      flushed state for this seed.
+    - ``"complete"`` — every player-type slot has reported
+      ``ClientStatus.CLIENT_GOAL``. Group / spectator slots are ignored
+      because they don't have a goal to reach.
+    - ``"in_progress"`` — everything else with a save: started, stalled,
+      or hosted-but-never-played. A seed with no player slots stays
+      here forever once hosted, which is honest — we have no goal
+      signal for spectator-only / group-only seeds.
+    """
+    if not seed.has_save:
+        return "untouched"
+    players = [n for n, t in seed.slot_types.items() if t == "player"]
+    if players and all(seed.slot_complete.get(n, False) for n in players):
+        return "complete"
+    return "in_progress"
+
+
+def filter_by_state(seeds: list[Seed], state: StateFilter) -> list[Seed]:
+    """Narrow *seeds* to those matching the chip selection. ``"all"``
+    returns a fresh copy so callers can chain mutations safely."""
+    if state == "all":
+        return list(seeds)
+    return [s for s in seeds if seed_state(s) == state]
 
 
 def filter_seeds(seeds: list[Seed], query: str) -> list[Seed]:
@@ -258,6 +296,8 @@ def _run_app(args: tuple[str, ...]) -> None:
             self._sort_buttons: dict[SortKey, MDButton] = {}
             self._sort_key: SortKey = "date"
             self._sort_desc: bool = True
+            self._state_buttons: dict[StateFilter, MDButton] = {}
+            self._state_filter: StateFilter = "all"
             self._observer: object | None = None
             self._refresh_pending: bool = False
             self._expanded: set[Path] = set()
@@ -296,6 +336,7 @@ def _run_app(args: tuple[str, ...]) -> None:
 
             root.add_widget(self._build_header())
             root.add_widget(self._build_search_bar())
+            root.add_widget(self._build_state_bar())
             root.add_widget(self._build_sort_bar())
 
             scroll = MDScrollView()
@@ -360,6 +401,45 @@ def _run_app(args: tuple[str, ...]) -> None:
         def _on_filter_change(self, text: str) -> None:
             self._filter_text = text
             self._render_seeds()
+
+        def _build_state_bar(self) -> MDBoxLayout:
+            bar = MDBoxLayout(
+                orientation="horizontal",
+                size_hint_y=None,
+                height=dp(40),
+                spacing=dp(8),
+            )
+            bar.add_widget(
+                MDLabel(
+                    text="Show",
+                    halign="left",
+                    valign="center",
+                    size_hint_x=None,
+                    width=dp(64),
+                )
+            )
+            for key in ("all", "untouched", "in_progress", "complete"):
+                btn = MDButton(
+                    MDButtonText(text=_STATE_LABELS[key]),
+                    style="tonal",
+                    size_hint=(None, None),
+                    size=(dp(144), dp(40)),
+                )
+                btn.bind(on_release=lambda _btn, k=key: self._set_state_filter(k))
+                self._state_buttons[key] = btn
+                bar.add_widget(btn)
+            bar.add_widget(MDLabel())  # spacer
+            self._update_state_button_styles()
+            return bar
+
+        def _set_state_filter(self, state: StateFilter) -> None:
+            self._state_filter = state
+            self._update_state_button_styles()
+            self._render_seeds()
+
+        def _update_state_button_styles(self) -> None:
+            for key, btn in self._state_buttons.items():
+                btn.style = "filled" if key == self._state_filter else "tonal"
 
         def _build_sort_bar(self) -> MDBoxLayout:
             bar = MDBoxLayout(
@@ -516,7 +596,12 @@ def _run_app(args: tuple[str, ...]) -> None:
                 )
                 return
 
-            visible = filter_seeds(self._seeds_cache, self._filter_text)
+            # State chip narrows the universe first; text search then
+            # refines within that subset. Matches the visual order in
+            # the UI (chip row above search) and the user's mental
+            # model: "show me hosted seeds called minecraft".
+            visible = filter_by_state(self._seeds_cache, self._state_filter)
+            visible = filter_seeds(visible, self._filter_text)
             sorted_visible = sort_seeds(
                 visible, key=self._sort_key, desc=self._sort_desc
             )
@@ -525,7 +610,7 @@ def _run_app(args: tuple[str, ...]) -> None:
             if not sorted_visible:
                 self._list_widget.clear_widgets()
                 self._show_message(
-                    f"No seeds match '{self._filter_text}'",
+                    self._no_match_message(),
                     status=f"0 of {total} match",
                 )
                 return
@@ -548,10 +633,25 @@ def _run_app(args: tuple[str, ...]) -> None:
             for card in cards_in_order:
                 self._list_widget.add_widget(card)
 
-            if self._filter_text.strip():
+            if self._filter_text.strip() or self._state_filter != "all":
                 self._status_label.text = f"{len(sorted_visible)} of {total} match"
             else:
                 self._status_label.text = f"{total} seeds"
+
+        def _no_match_message(self) -> str:
+            """Tailor the empty-state message to whichever filter (or
+            both) is currently active so the user knows what to relax."""
+            text = self._filter_text.strip()
+            state = self._state_filter
+            if text and state != "all":
+                return (
+                    f"No {_STATE_LABELS[state].lower()} seeds match '{text}'"
+                )
+            if text:
+                return f"No seeds match '{text}'"
+            if state != "all":
+                return f"No seeds are {_STATE_LABELS[state].lower()}"
+            return "No seeds"
 
         def _show_message(self, text: str, *, status: str) -> None:
             assert self._list_widget is not None

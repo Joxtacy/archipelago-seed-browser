@@ -13,7 +13,9 @@ from seed_browser.browser import (
     _format_seed_row,
     _format_slot_progress,
     _format_version,
+    filter_by_state,
     filter_seeds,
+    seed_state,
     sort_seeds,
 )
 from seed_browser.scanner import Seed
@@ -359,3 +361,120 @@ def test_sort_seeds_does_not_mutate_input() -> None:
     original = [a, b]
     sort_seeds(original, key="size", desc=True)
     assert original == [a, b]
+
+
+def test_seed_state_no_save_is_untouched() -> None:
+    seed = Seed(path=Path("/tmp/a"), mtime=1.0, size_bytes=10)
+    assert seed_state(seed) == "untouched"
+
+
+def test_seed_state_save_without_completion_is_in_progress() -> None:
+    """A hosted seed where no player has reached the goal is still in
+    flight, even if checks are zero (just started, paused, etc.)."""
+    seed = Seed(
+        path=Path("/tmp/a"),
+        mtime=1.0,
+        size_bytes=10,
+        slot_types={1: "player", 2: "player"},
+        slot_complete={1: False, 2: False},
+        has_save=True,
+        last_hosted=100.0,
+    )
+    assert seed_state(seed) == "in_progress"
+
+
+def test_seed_state_all_player_slots_complete_is_complete() -> None:
+    seed = Seed(
+        path=Path("/tmp/a"),
+        mtime=1.0,
+        size_bytes=10,
+        slot_types={1: "player", 2: "player"},
+        slot_complete={1: True, 2: True},
+        has_save=True,
+        last_hosted=100.0,
+    )
+    assert seed_state(seed) == "complete"
+
+
+def test_seed_state_ignores_non_player_slots_for_completion() -> None:
+    """Group / spectator slots don't have a goal to reach, so they
+    shouldn't gate the 'complete' classification."""
+    seed = Seed(
+        path=Path("/tmp/a"),
+        mtime=1.0,
+        size_bytes=10,
+        slot_types={1: "player", 2: "group", 3: "spectator"},
+        slot_complete={1: True},  # group/spectator never report goal
+        has_save=True,
+        last_hosted=100.0,
+    )
+    assert seed_state(seed) == "complete"
+
+
+def test_seed_state_hosted_with_no_player_slots_stays_in_progress() -> None:
+    """Spectator/group-only seeds have no completion signal — calling
+    them 'complete' would be a lie, so they stay 'in_progress'."""
+    seed = Seed(
+        path=Path("/tmp/a"),
+        mtime=1.0,
+        size_bytes=10,
+        slot_types={1: "spectator"},
+        has_save=True,
+        last_hosted=100.0,
+    )
+    assert seed_state(seed) == "in_progress"
+
+
+def test_seed_state_partial_completion_is_in_progress() -> None:
+    """Multiple players, only some done → still in progress. 'Complete'
+    means everyone finished."""
+    seed = Seed(
+        path=Path("/tmp/a"),
+        mtime=1.0,
+        size_bytes=10,
+        slot_types={1: "player", 2: "player"},
+        slot_complete={1: True, 2: False},
+        has_save=True,
+        last_hosted=100.0,
+    )
+    assert seed_state(seed) == "in_progress"
+
+
+def test_filter_by_state_all_returns_full_copy() -> None:
+    a = _seed("a", mtime=1.0, size=10, slots=1)
+    b = _seed("b", mtime=2.0, size=20, slots=1, last_hosted=100.0)
+    seeds = [a, b]
+    result = filter_by_state(seeds, "all")
+    assert result == seeds
+    assert result is not seeds  # fresh list, not aliased
+
+
+def test_filter_by_state_untouched_excludes_hosted_seeds() -> None:
+    a = _seed("a", mtime=1.0, size=10, slots=1)  # untouched
+    b = _seed("b", mtime=2.0, size=20, slots=1, last_hosted=100.0)  # hosted
+    assert [s.path.name for s in filter_by_state([a, b], "untouched")] == ["a"]
+
+
+def test_filter_by_state_complete_picks_only_finished_seeds() -> None:
+    done = Seed(
+        path=Path("/tmp/done"),
+        mtime=1.0,
+        size_bytes=10,
+        slot_types={1: "player"},
+        slot_complete={1: True},
+        has_save=True,
+        last_hosted=100.0,
+    )
+    in_flight = Seed(
+        path=Path("/tmp/wip"),
+        mtime=2.0,
+        size_bytes=10,
+        slot_types={1: "player"},
+        has_save=True,
+        last_hosted=100.0,
+    )
+    untouched = Seed(path=Path("/tmp/raw"), mtime=3.0, size_bytes=10)
+    assert [s.path.name for s in filter_by_state(
+        [done, in_flight, untouched], "complete"
+    )] == ["done"]
+
