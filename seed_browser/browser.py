@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import threading
 from pathlib import Path
 from typing import Literal
 
@@ -270,6 +271,11 @@ def _run_app(args: tuple[str, ...]) -> None:
             self._filter_event: object | None = None
             """Pending debounced ``_render_seeds`` schedule, or ``None``
             if no keystroke is currently waiting to be applied."""
+            self._scan_gen: int = 0
+            """Monotonic counter bumped on every ``_refresh`` dispatch.
+            Worker threads attach the value they saw to their result and
+            it's discarded on the UI thread if another scan has started
+            in the meantime."""
 
         def build(self) -> MDBoxLayout:
             # Match the AP launcher's deep-navy backdrop. The default
@@ -413,38 +419,83 @@ def _run_app(args: tuple[str, ...]) -> None:
                 btn.children[0].text = label
 
         def _refresh(self) -> None:
-            """Rescan disk and re-render. Use ``_render_seeds`` for
-            sort/filter/expand-toggle updates that don't need fresh
-            filesystem state."""
+            """Dispatch a background rescan and return immediately. Use
+            ``_render_seeds`` for sort/filter/expand-toggle updates that
+            don't need fresh filesystem state.
+
+            The actual scan runs on a worker thread so the first scan
+            (or any scan that misses the cache) doesn't freeze the UI.
+            Existing rows stay on screen until the new result lands —
+            cache hits make this near-instantaneous on follow-up scans.
+            """
             assert self._list_widget is not None
-            self._list_widget.clear_widgets()
+            assert self._status_label is not None
 
             if not output_dir.exists():
+                self._scan_gen += 1
                 self._seeds_cache = []
+                self._list_widget.clear_widgets()
                 self._show_message(
                     f"Output folder does not exist:\n{output_dir}",
                     status="folder missing",
                 )
                 return
             if not output_dir.is_dir():
+                self._scan_gen += 1
                 self._seeds_cache = []
+                self._list_widget.clear_widgets()
                 self._show_message(
                     f"Output path is not a directory:\n{output_dir}",
                     status="not a directory",
                 )
                 return
 
+            self._scan_gen += 1
+            gen = self._scan_gen
+            prior = {s.path: s for s in self._seeds_cache}
+            self._status_label.text = "scanning…"
+            threading.Thread(
+                target=self._scan_worker,
+                args=(gen, prior),
+                daemon=True,
+            ).start()
+
+        def _scan_worker(self, gen: int, prior: dict[Path, Seed]) -> None:
+            """Runs on a background thread. Must not touch Kivy widgets
+            directly — results go through ``Clock.schedule_once`` so the
+            UI update lands on the main thread."""
+            seeds: list[Seed] = []
+            err: Exception | None = None
             try:
-                prior = {s.path: s for s in self._seeds_cache}
-                self._seeds_cache = scan_directory(output_dir, cache=prior)
+                # 4 workers is enough to overlap I/O across a typical
+                # output folder without paying meaningful pool overhead.
+                # Per-seed cost is mostly zipfile reads + zlib, both of
+                # which release the GIL.
+                seeds = scan_directory(output_dir, cache=prior, workers=4)
             except OSError as e:
+                err = e
+            except Exception as e:  # noqa: BLE001  # never crash the launcher
+                logger.exception("seed scan failed")
+                err = e
+            Clock.schedule_once(
+                lambda _dt: self._on_scan_complete(gen, seeds, err), 0
+            )
+
+        def _on_scan_complete(
+            self, gen: int, seeds: list[Seed], err: Exception | None
+        ) -> None:
+            if gen != self._scan_gen:
+                return  # a newer scan has already started; drop this result
+            assert self._list_widget is not None
+            if err is not None:
                 self._seeds_cache = []
+                self._list_widget.clear_widgets()
                 self._show_message(
-                    f"Cannot read {output_dir}:\n{e}",
+                    f"Cannot read {output_dir}:\n{err}",
                     status="folder unreadable",
                 )
                 return
-
+            self._seeds_cache = seeds
             self._render_seeds()
 
         def _render_seeds(self) -> None:

@@ -213,7 +213,10 @@ def _decode_save(path: Path) -> dict:
 
 
 def scan_directory(
-    folder: Path, cache: dict[Path, Seed] | None = None
+    folder: Path,
+    cache: dict[Path, Seed] | None = None,
+    *,
+    workers: int = 1,
 ) -> list[Seed]:
     """Return seeds in *folder* sorted by mtime descending.
 
@@ -225,6 +228,11 @@ def scan_directory(
     both match the cached values are reused verbatim — the expensive
     multidata + save decode is skipped. Re-decoding only happens when
     something actually changed on disk.
+
+    When *workers* > 1 the cache-miss scans run on a thread pool. The
+    bulk of per-seed cost is zip I/O + zlib decompression, both of
+    which release the GIL, so threading scales well even though the
+    pickle decode itself doesn't.
     """
     try:
         entries = list(folder.iterdir())
@@ -232,11 +240,16 @@ def scan_directory(
         logger.warning("cannot list %s: %s", folder, e)
         return []
 
-    seeds: list[Seed] = []
-    for p in entries:
-        if not (p.is_file() and _SEED_FILE_RE.match(p.name)):
-            continue
-        seeds.append(_scan_with_cache(p, cache))
+    candidates = [p for p in entries if p.is_file() and _SEED_FILE_RE.match(p.name)]
+
+    if workers <= 1 or len(candidates) <= 1:
+        seeds = [_scan_with_cache(p, cache) for p in candidates]
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            seeds = list(ex.map(lambda p: _scan_with_cache(p, cache), candidates))
+
     seeds.sort(key=lambda s: s.mtime, reverse=True)
     return seeds
 

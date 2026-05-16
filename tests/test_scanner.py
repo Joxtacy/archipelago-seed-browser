@@ -160,6 +160,19 @@ def test_scan_directory_rescans_when_save_mtime_changes(tmp_path: Path) -> None:
     assert second[0].last_hosted == 1_750_000_000.0
 
 
+def test_scan_directory_parallel_matches_sequential(tmp_path: Path) -> None:
+    """Running with ``workers>1`` must produce the same seeds in the
+    same order as the sequential path — parallelism is an internal
+    detail, not a behavior change."""
+    for i in range(6):
+        _write_seed_with_zip_date(
+            tmp_path / f"AP_{i}.zip", str(i), (2024, 1, 1 + i, 0, 0, 0)
+        )
+    sequential = scan_directory(tmp_path)
+    parallel = scan_directory(tmp_path, workers=4)
+    assert [s.path.name for s in parallel] == [s.path.name for s in sequential]
+
+
 def test_scan_directory_missing_folder(tmp_path: Path) -> None:
     """Listing a nonexistent dir returns an empty list, not a crash."""
     seeds = scan_directory(tmp_path / "does-not-exist")
