@@ -38,7 +38,16 @@ not allowed. Update `world_version` only on stable tags (e.g. `1.0.0`,
    jj git push --bookmark main
    ```
 3. **Wait for CI to go green** on that commit. The release workflow re-runs
-   tests, but a broken `main` is a faster signal.
+   tests, but a broken `main` is a faster signal — and catching it here
+   avoids the recovery dance below (delete tag, retag, possibly delete the
+   published release).
+   ```sh
+   gh run watch --repo Joxtacy/archipelago-seed-browser --exit-status \
+     "$(gh run list --repo Joxtacy/archipelago-seed-browser \
+        --workflow ci.yml --branch main --limit 1 \
+        --json databaseId --jq '.[0].databaseId')"
+   ```
+   Only proceed to the tag step once that exits 0.
 4. **Tag the commit.** jj 0.41+ has native tag commands; in a
    colocated repo they write straight to the git tag store, so
    subsequent `git push` sees them:
