@@ -465,7 +465,7 @@ def _run_app(args: tuple[str, ...]) -> None:
             box = MDBoxLayout(
                 orientation="horizontal",
                 size_hint=(None, None),
-                width=dp(360),
+                width=dp(440),
                 height=dp(40),
                 spacing=dp(4),
                 pos_hint={"center_y": 0.5},
@@ -476,6 +476,14 @@ def _run_app(args: tuple[str, ...]) -> None:
                     "Host",
                     lambda _btn, s=seed: self._do_action(actions.host_seed, s, "host"),
                     disabled=corrupt or not seed.has_archipelago_file,
+                )
+            )
+            box.add_widget(
+                self._action_button(
+                    "AP.gg",
+                    lambda _btn, s=seed: self._do_action(
+                        actions.open_in_browser_upload, s, "open archipelago.gg"
+                    ),
                 )
             )
             box.add_widget(

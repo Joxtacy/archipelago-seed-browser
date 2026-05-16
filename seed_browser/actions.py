@@ -24,6 +24,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import webbrowser
 import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -77,6 +78,19 @@ def open_spoiler(seed: Seed) -> None:
     with os.fdopen(fd, "wb") as f:
         f.write(content)
     open_file(tmp_path)
+
+
+_UPLOADS_URL = "https://archipelago.gg/uploads"
+
+
+def open_in_browser_upload(_seed: Seed) -> None:
+    """Open archipelago.gg's upload page in the default browser.
+
+    Doesn't push the zip directly — the user picks it on the upload
+    page. This is the safe convenience-only path; a scripted upload
+    against the form route is documented in IDEAS.md as a stretch.
+    """
+    webbrowser.open(_UPLOADS_URL)
 
 
 def reveal_in_file_manager(seed: Seed) -> None:

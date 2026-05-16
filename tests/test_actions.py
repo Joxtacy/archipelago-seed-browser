@@ -17,6 +17,7 @@ from seed_browser.actions import (
     _macos_terminal_command,
     _reveal_command,
     delete_seed,
+    open_in_browser_upload,
     open_spoiler,
 )
 from seed_browser.scanner import Seed
@@ -105,6 +106,18 @@ def test_macos_terminal_command_escapes_embedded_quotes() -> None:
     # Literal `\"` in the AppleScript means the source string contains a
     # backslash followed by a double-quote.
     assert '\\"' in script
+
+
+def test_open_in_browser_upload_targets_archipelago_gg(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The website-host button must point at archipelago.gg's upload
+    page, not anywhere else — and never accidentally upload the file
+    itself (that would be the deeper integration we deferred)."""
+    calls: list[str] = []
+    monkeypatch.setattr("seed_browser.actions.webbrowser.open", calls.append)
+    open_in_browser_upload(_seed(Path("/tmp/AP_1.zip")))
+    assert calls == ["https://archipelago.gg/uploads"]
 
 
 def test_open_spoiler_rejects_seed_without_spoiler(tmp_path: Path) -> None:
