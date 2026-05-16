@@ -276,10 +276,13 @@ def _run_app(args: tuple[str, ...]) -> None:
             Worker threads attach the value they saw to their result and
             it's discarded on the UI thread if another scan has started
             in the meantime."""
-            self._row_widgets: dict[Path, object] = {}
-            """``{seed.path: card_widget}`` for currently-rendered rows.
-            Lets ``_toggle_expanded`` swap a single card in place instead
-            of tearing down and rebuilding the whole list."""
+            self._row_widgets: dict[Path, tuple[Seed, object]] = {}
+            """``{seed.path: (seed, card_widget)}`` for every seed in the
+            current cache (visible or filtered out). The Seed identity is
+            tracked so that re-scans which replace the Seed object also
+            invalidate the cached card. Lets ``_render_seeds`` reuse
+            widgets across filter / sort changes — building a card is
+            far more expensive than re-parenting one."""
 
         def build(self) -> MDBoxLayout:
             # Match the AP launcher's deep-navy backdrop. The default
@@ -504,13 +507,23 @@ def _run_app(args: tuple[str, ...]) -> None:
 
         def _render_seeds(self) -> None:
             """Render the cached seed list applying the current filter
-            and sort. Cheap — no disk access."""
+            and sort. Cheap — no disk access, and existing card widgets
+            are reused so filter / sort changes don't pay the per-card
+            construction cost."""
             assert self._list_widget is not None
             assert self._status_label is not None
-            self._list_widget.clear_widgets()
-            self._row_widgets.clear()
+
+            # Drop cards whose seed disappeared from the cache or whose
+            # Seed object got replaced by a re-scan — those are stale
+            # and need to be rebuilt before being shown again.
+            current_by_path = {s.path: s for s in self._seeds_cache}
+            for path in list(self._row_widgets):
+                cached_seed, _card = self._row_widgets[path]
+                if current_by_path.get(path) is not cached_seed:
+                    del self._row_widgets[path]
 
             if not self._seeds_cache:
+                self._list_widget.clear_widgets()
                 self._show_message(
                     f"No AP_*.zip seeds found in\n{output_dir}",
                     status="0 seeds",
@@ -524,16 +537,31 @@ def _run_app(args: tuple[str, ...]) -> None:
             total = len(self._seeds_cache)
 
             if not sorted_visible:
+                self._list_widget.clear_widgets()
                 self._show_message(
                     f"No seeds match '{self._filter_text}'",
                     status=f"0 of {total} match",
                 )
                 return
 
+            cards_in_order: list[object] = []
             for seed in sorted_visible:
-                card = self._build_seed_row(seed)
+                cached = self._row_widgets.get(seed.path)
+                if cached is None:
+                    card = self._build_seed_row(seed)
+                    self._row_widgets[seed.path] = (seed, card)
+                else:
+                    card = cached[1]
+                cards_in_order.append(card)
+
+            # Reparent in the new order. clear_widgets + add_widget on
+            # already-built widgets is cheap (just list mutation +
+            # layout invalidation); the expensive work — building the
+            # MDCard tree — only happens for genuinely-new seeds above.
+            self._list_widget.clear_widgets()
+            for card in cards_in_order:
                 self._list_widget.add_widget(card)
-                self._row_widgets[seed.path] = card
+
             if self._filter_text.strip():
                 self._status_label.text = f"{len(sorted_visible)} of {total} match"
             else:
@@ -635,18 +663,19 @@ def _run_app(args: tuple[str, ...]) -> None:
             with many seeds the per-card widget churn was visible as
             input lag on every '+' click."""
             assert self._list_widget is not None
-            old = self._row_widgets.get(seed.path)
-            if old is None or old.parent is None:
+            cached = self._row_widgets.get(seed.path)
+            if cached is None or cached[1].parent is None:
                 # Lost track of the widget (e.g. cache was cleared
                 # between renders). Fall back to a full re-render so
                 # state reconciles cleanly.
                 self._render_seeds()
                 return
+            old = cached[1]
             idx = self._list_widget.children.index(old)
             self._list_widget.remove_widget(old)
             new = self._build_seed_row(seed)
             self._list_widget.add_widget(new, index=idx)
-            self._row_widgets[seed.path] = new
+            self._row_widgets[seed.path] = (seed, new)
 
         def _build_details_panel(self, seed: Seed) -> MDBoxLayout:
             slot_line_h = dp(36)
