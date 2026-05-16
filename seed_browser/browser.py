@@ -557,7 +557,7 @@ def _run_app(args: tuple[str, ...]) -> None:
             self._render_seeds()
 
         def _build_details_panel(self, seed: Seed) -> MDBoxLayout:
-            slot_line_h = dp(24)
+            slot_line_h = dp(36)
             footer_line_h = dp(24)
             footer_lines = _format_seed_footer_lines(seed)
             n_slots = len(seed.slots)
@@ -575,22 +575,7 @@ def _run_app(args: tuple[str, ...]) -> None:
                 spacing=dp(2),
             )
             for slot_num, slot_name, game in seed.slots:
-                slot_type = seed.slot_types.get(slot_num, "player")
-                patch = seed.slot_patches.get(slot_num)
-                patch_marker = f"  [{patch}]" if patch else ""
-                progress_marker = _format_slot_progress(seed, slot_num)
-                panel.add_widget(
-                    MDLabel(
-                        text=(
-                            f"Slot {slot_num} — {slot_name}  "
-                            f"({game}, {slot_type}){patch_marker}{progress_marker}"
-                        ),
-                        halign="left",
-                        valign="middle",
-                        size_hint_y=None,
-                        height=slot_line_h,
-                    )
-                )
+                panel.add_widget(self._build_slot_row(seed, slot_num, slot_name, game))
             for line in footer_lines:
                 panel.add_widget(
                     MDLabel(
@@ -602,6 +587,56 @@ def _run_app(args: tuple[str, ...]) -> None:
                     )
                 )
             return panel
+
+        def _build_slot_row(
+            self, seed: Seed, slot_num: int, slot_name: str, game: str
+        ) -> MDBoxLayout:
+            slot_type = seed.slot_types.get(slot_num, "player")
+            patch = seed.slot_patches.get(slot_num)
+            patch_marker = f"  [{patch}]" if patch else ""
+            progress_marker = _format_slot_progress(seed, slot_num)
+
+            row = MDBoxLayout(
+                orientation="horizontal",
+                size_hint_y=None,
+                height=dp(36),
+                spacing=dp(8),
+            )
+            row.add_widget(
+                MDLabel(
+                    text=(
+                        f"Slot {slot_num} — {slot_name}  "
+                        f"({game}, {slot_type}){patch_marker}{progress_marker}"
+                    ),
+                    halign="left",
+                    valign="middle",
+                )
+            )
+            if patch:
+                btn = MDButton(
+                    MDButtonText(text=f"Extract {patch}"),
+                    style="tonal",
+                    size_hint=(None, None),
+                    size=(dp(148), dp(32)),
+                    pos_hint={"center_y": 0.5},
+                )
+                btn.bind(
+                    on_release=lambda _btn, s=seed, n=slot_num: self._extract_patch(s, n)
+                )
+                row.add_widget(btn)
+            return row
+
+        def _extract_patch(self, seed: Seed, slot_num: int) -> None:
+            assert self._status_label is not None
+            try:
+                dest = actions.extract_slot_patch(seed, slot_num)
+            except Exception as e:  # noqa: BLE001  # surface, never crash
+                logger.exception(
+                    "extract patch failed for slot %s in %s", slot_num, seed.path
+                )
+                self._status_label.text = f"extract failed: {e}"
+                return
+            self._status_label.text = f"extracted slot {slot_num} to {dest}"
 
         def _build_action_buttons(self, seed: Seed) -> MDBoxLayout:
             box = MDBoxLayout(

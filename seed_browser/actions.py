@@ -93,6 +93,39 @@ def open_in_browser_upload(_seed: Seed) -> None:
     webbrowser.open(_UPLOADS_URL)
 
 
+def extract_slot_patch(seed: Seed, slot_num: int) -> Path:
+    """Pull slot *slot_num*'s patch entry out of *seed*'s zip and write
+    it next to the zip in the same directory. Returns the path of the
+    extracted file.
+
+    Refuses (``ValueError``) when the slot has no patch in the scanner's
+    ``slot_patches`` map — server-only slots (Jigsaw, ChecksFinder, …)
+    have no patch container; nothing to extract.
+    """
+    if slot_num not in seed.slot_patches:
+        raise ValueError(f"slot {slot_num} has no patch file")
+    suffix = seed.slot_patches[slot_num]
+    with zipfile.ZipFile(seed.path) as zf:
+        # Patch entries follow ``AP_<id>_P<slot>_<player>.<suffix>``. We
+        # already know the suffix; the slot guard pins ``_P<N>_`` so we
+        # don't grab another slot's patch with the same suffix.
+        slot_marker = f"_P{slot_num}_"
+        entry = next(
+            (n for n in zf.namelist() if slot_marker in n and n.endswith(suffix)),
+            None,
+        )
+        if entry is None:
+            raise FileNotFoundError(
+                f"no patch entry for slot {slot_num} in {seed.path.name}"
+            )
+        # Strip any zip-internal path so we always write a flat file
+        # alongside the seed zip, not into a subdir.
+        destination = seed.path.parent / Path(entry).name
+        with zf.open(entry) as src, open(destination, "wb") as dst:
+            dst.write(src.read())
+    return destination
+
+
 def reveal_in_file_manager(seed: Seed) -> None:
     """Open the OS file manager focused on *seed*'s zip."""
     cmd = _reveal_command(seed.path, sys.platform)

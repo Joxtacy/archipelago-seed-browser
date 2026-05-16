@@ -17,6 +17,7 @@ from seed_browser.actions import (
     _macos_terminal_command,
     _reveal_command,
     delete_seed,
+    extract_slot_patch,
     open_in_browser_upload,
     open_spoiler,
 )
@@ -118,6 +119,49 @@ def test_open_in_browser_upload_targets_archipelago_gg(
     monkeypatch.setattr("seed_browser.actions.webbrowser.open", calls.append)
     open_in_browser_upload(_seed(Path("/tmp/AP_1.zip")))
     assert calls == ["https://archipelago.gg/uploads"]
+
+
+def test_extract_slot_patch_writes_file_alongside_seed(tmp_path: Path) -> None:
+    """Extract the slot's patch entry to the same directory as the
+    seed zip and return the resulting path."""
+    seed_path = tmp_path / "AP_12345.zip"
+    with zipfile.ZipFile(seed_path, "w") as zf:
+        zf.writestr("AP_12345_P1_Jox.apmc", b"patch-bytes")
+        zf.writestr("AP_12345_P2_Bob.aplttp", b"other-slot-bytes")
+
+    seed = Seed(
+        path=seed_path,
+        mtime=0.0,
+        size_bytes=0,
+        slot_patches={1: ".apmc", 2: ".aplttp"},
+    )
+    out = extract_slot_patch(seed, 1)
+    assert out == tmp_path / "AP_12345_P1_Jox.apmc"
+    assert out.read_bytes() == b"patch-bytes"
+
+
+def test_extract_slot_patch_refuses_server_only_slot(tmp_path: Path) -> None:
+    """Slots without a patch entry (Jigsaw, ChecksFinder, ...) must
+    raise rather than silently produce an empty file."""
+    seed = Seed(path=tmp_path / "AP_1.zip", mtime=0.0, size_bytes=0)
+    with pytest.raises(ValueError, match="no patch file"):
+        extract_slot_patch(seed, 1)
+
+
+def test_extract_slot_patch_does_not_grab_wrong_slot(tmp_path: Path) -> None:
+    """The ``_P<slot>_`` guard prevents the regex from matching a
+    different slot that happens to share the same patch suffix."""
+    seed_path = tmp_path / "AP_99.zip"
+    with zipfile.ZipFile(seed_path, "w") as zf:
+        zf.writestr("AP_99_P1_Alice.apmc", b"slot1")
+        zf.writestr("AP_99_P2_Bob.apmc", b"slot2")
+    seed = Seed(
+        path=seed_path,
+        mtime=0.0,
+        size_bytes=0,
+        slot_patches={1: ".apmc", 2: ".apmc"},
+    )
+    assert extract_slot_patch(seed, 2).read_bytes() == b"slot2"
 
 
 def test_open_spoiler_rejects_seed_without_spoiler(tmp_path: Path) -> None:
