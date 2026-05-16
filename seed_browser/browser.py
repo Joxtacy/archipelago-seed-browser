@@ -17,12 +17,13 @@ from .scanner import Seed, scan_directory
 
 logger = logging.getLogger(__name__)
 
-SortKey = Literal["date", "size", "slots", "hosted"]
+SortKey = Literal["date", "size", "slots", "hosted", "game"]
 _SORT_LABELS: dict[SortKey, str] = {
     "date": "Date",
     "size": "Size",
     "slots": "Slots",
     "hosted": "Last hosted",
+    "game": "Game",
 }
 
 
@@ -95,6 +96,23 @@ def sort_seeds(seeds: list[Seed], *, key: SortKey, desc: bool) -> list[Seed]:
             reverse=True,
         )
         return hosted + unhosted
+
+    if key == "game":
+        # Sort by the headlining (first-seen) game name, case-insensitive
+        # so 'Jigsaw' and 'jigsaw' group together. Seeds with no decoded
+        # games fall to the end regardless of direction — there's nothing
+        # meaningful to sort them by.
+        with_game = sorted(
+            (s for s in seeds if s.games),
+            key=lambda s: s.games[0][0].lower(),
+            reverse=desc,
+        )
+        without_game = sorted(
+            (s for s in seeds if not s.games),
+            key=lambda s: s.mtime,
+            reverse=True,
+        )
+        return with_game + without_game
 
     keyfns = {
         "date": lambda s: s.mtime,
@@ -238,7 +256,7 @@ def _run_app(args: tuple[str, ...]) -> None:
                     width=dp(64),
                 )
             )
-            for key in ("date", "size", "slots", "hosted"):
+            for key in ("date", "size", "slots", "hosted", "game"):
                 btn = MDButton(
                     MDButtonText(text=_SORT_LABELS[key]),
                     style="tonal",

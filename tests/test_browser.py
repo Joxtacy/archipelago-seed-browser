@@ -19,12 +19,14 @@ def _seed(
     size: int,
     slots: int,
     last_hosted: float | None = None,
+    game: str = "Game",
 ) -> Seed:
     return Seed(
         path=Path(f"/tmp/{name}"),
         mtime=mtime,
         size_bytes=size,
-        slots=[(i, f"P{i}", "Game") for i in range(1, slots + 1)],
+        slots=[(i, f"P{i}", game) for i in range(1, slots + 1)],
+        games=[(game, slots)] if slots else [],
         has_save=last_hosted is not None,
         last_hosted=last_hosted,
     )
@@ -129,6 +131,43 @@ def test_format_seed_row_does_not_include_generator_version() -> None:
     assert "AP " not in label
     assert "0.6.7" not in label
     assert "2 slots" in label
+
+
+def test_sort_seeds_by_game_uses_first_listed_game_case_insensitive() -> None:
+    """Sort by the headlining (first-seen) game. Case-folding so
+    differently-capitalized game names cluster."""
+    a = _seed("a", mtime=1.0, size=10, slots=1, game="Minecraft")
+    b = _seed("b", mtime=2.0, size=10, slots=1, game="archipelago")
+    c = _seed("c", mtime=3.0, size=10, slots=1, game="Jigsaw")
+    assert [s.path.name for s in sort_seeds([a, b, c], key="game", desc=False)] == [
+        "b",
+        "c",
+        "a",
+    ]
+
+
+def test_sort_seeds_by_game_desc_reverses_the_block() -> None:
+    a = _seed("a", mtime=1.0, size=10, slots=1, game="Minecraft")
+    b = _seed("b", mtime=2.0, size=10, slots=1, game="Jigsaw")
+    assert [s.path.name for s in sort_seeds([a, b], key="game", desc=True)] == [
+        "a",
+        "b",
+    ]
+
+
+def test_sort_seeds_by_game_trails_seeds_without_decoded_games() -> None:
+    """Error / unscanned seeds (empty games list) have nothing to sort
+    by; they fall to the end regardless of direction."""
+    no_game = Seed(path=Path("/tmp/no-game"), mtime=5.0, size_bytes=10)
+    a = _seed("a", mtime=1.0, size=10, slots=1, game="Minecraft")
+    assert [s.path.name for s in sort_seeds([no_game, a], key="game", desc=True)] == [
+        "a",
+        "no-game",
+    ]
+    assert [s.path.name for s in sort_seeds([no_game, a], key="game", desc=False)] == [
+        "a",
+        "no-game",
+    ]
 
 
 def test_sort_seeds_does_not_mutate_input() -> None:
