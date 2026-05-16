@@ -267,6 +267,9 @@ def _run_app(args: tuple[str, ...]) -> None:
             """Last successful scan result — sort/filter/expand toggles
             re-render from this without hitting the filesystem again."""
             self._filter_text: str = ""
+            self._filter_event: object | None = None
+            """Pending debounced ``_render_seeds`` schedule, or ``None``
+            if no keystroke is currently waiting to be applied."""
 
         def build(self) -> MDBoxLayout:
             # Match the AP launcher's deep-navy backdrop. The default
@@ -345,7 +348,18 @@ def _run_app(args: tuple[str, ...]) -> None:
             return bar
 
         def _on_filter_change(self, text: str) -> None:
+            # Rebuilding every card on each keystroke stutters once the
+            # list grows past a few dozen seeds. Coalesce bursts of
+            # typing into a single render ~150ms after the last edit.
             self._filter_text = text
+            if self._filter_event is not None:
+                self._filter_event.cancel()
+            self._filter_event = Clock.schedule_once(
+                lambda _dt: self._apply_filter(), 0.15
+            )
+
+        def _apply_filter(self) -> None:
+            self._filter_event = None
             self._render_seeds()
 
         def _build_sort_bar(self) -> MDBoxLayout:
