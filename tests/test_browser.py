@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from seed_browser.browser import (
+    _format_seed_footer_lines,
     _format_seed_row,
     _format_slot_progress,
     _format_version,
@@ -122,9 +123,10 @@ def test_format_version_handles_missing() -> None:
     assert _format_version(None) is None
 
 
-def test_format_seed_row_does_not_include_generator_version() -> None:
-    """Generator version lives in the expanded panel only; the
-    collapsed row stays compact."""
+def test_format_seed_row_strips_size_spoiler_and_hosted_timestamp() -> None:
+    """Collapsed row stays compact: date, slot count, games, and a
+    bare 'hosted' marker. Size, spoiler, and the hosted timestamp move
+    to the expanded footer to avoid wrapping on multi-game seeds."""
     seed = Seed(
         path=Path("/tmp/AP_42.zip"),
         mtime=1_700_000_000.0,
@@ -132,11 +134,71 @@ def test_format_seed_row_does_not_include_generator_version() -> None:
         slots=[(1, "P1", "Jigsaw"), (2, "P2", "Minecraft")],
         games=[("Jigsaw", 1), ("Minecraft", 1)],
         generator_version=(0, 6, 7),
+        has_spoiler=True,
+        has_save=True,
+        last_hosted=1_700_000_000.0,
     )
     label = _format_seed_row(seed)
-    assert "AP " not in label
-    assert "0.6.7" not in label
     assert "2 slots" in label
+    assert "Jigsaw" in label
+    assert "hosted" in label
+    # Things that moved to the footer:
+    assert "KB" not in label
+    assert "(spoiler)" not in label
+    # Bare 'hosted' is fine; the inline 'hosted YYYY-MM-DD HH:MM'
+    # timestamp moved to the footer.
+    assert "hosted 2" not in label
+    assert "AP " not in label  # generator version still in footer only
+
+
+def test_format_seed_footer_splits_into_three_lines_when_all_known() -> None:
+    """Full metadata seed renders three footer lines: filename+size,
+    AP versions, last-hosted timestamp. Spoiler is intentionally
+    omitted (button signals it)."""
+    seed = Seed(
+        path=Path("/tmp/AP_42.zip"),
+        mtime=1_700_000_000.0,
+        size_bytes=34_500,
+        slots=[(1, "P1", "Jigsaw")],
+        games=[("Jigsaw", 1)],
+        generator_version=(0, 6, 7),
+        min_server_version=(0, 5, 0),
+        has_spoiler=True,
+        has_save=True,
+        last_hosted=1_700_000_000.0,
+    )
+    lines = _format_seed_footer_lines(seed)
+    assert len(lines) == 3
+    assert lines[0].startswith("AP_42.zip")
+    assert "KB" in lines[0]
+    assert "AP 0.6.7" in lines[1]
+    assert "AP 0.5.0" in lines[1]
+    assert "last hosted" in lines[2]
+    # Spoiler is intentionally not in any footer line.
+    assert not any("spoiler" in line for line in lines)
+
+
+def test_format_seed_footer_minimal_for_unhosted_unsigned_seed() -> None:
+    """When metadata is unknown, footer is a single line: filename + size."""
+    seed = Seed(path=Path("/tmp/AP_42.zip"), mtime=1.0, size_bytes=1024)
+    assert _format_seed_footer_lines(seed) == ["AP_42.zip  ·  1.0 KB"]
+
+
+def test_format_seed_footer_omits_version_line_when_unknown() -> None:
+    """A hosted seed whose multidata didn't decode still shows the
+    last-hosted line — it just doesn't have an AP-version line in the
+    middle."""
+    seed = Seed(
+        path=Path("/tmp/AP_42.zip"),
+        mtime=1.0,
+        size_bytes=10,
+        has_save=True,
+        last_hosted=1_700_000_000.0,
+    )
+    lines = _format_seed_footer_lines(seed)
+    assert len(lines) == 2
+    assert lines[0].startswith("AP_42.zip")
+    assert "last hosted" in lines[1]
 
 
 def test_sort_seeds_by_game_uses_first_listed_game_case_insensitive() -> None:
