@@ -276,6 +276,10 @@ def _run_app(args: tuple[str, ...]) -> None:
             Worker threads attach the value they saw to their result and
             it's discarded on the UI thread if another scan has started
             in the meantime."""
+            self._row_widgets: dict[Path, object] = {}
+            """``{seed.path: card_widget}`` for currently-rendered rows.
+            Lets ``_toggle_expanded`` swap a single card in place instead
+            of tearing down and rebuilding the whole list."""
 
         def build(self) -> MDBoxLayout:
             # Match the AP launcher's deep-navy backdrop. The default
@@ -504,6 +508,7 @@ def _run_app(args: tuple[str, ...]) -> None:
             assert self._list_widget is not None
             assert self._status_label is not None
             self._list_widget.clear_widgets()
+            self._row_widgets.clear()
 
             if not self._seeds_cache:
                 self._show_message(
@@ -526,7 +531,9 @@ def _run_app(args: tuple[str, ...]) -> None:
                 return
 
             for seed in sorted_visible:
-                self._list_widget.add_widget(self._build_seed_row(seed))
+                card = self._build_seed_row(seed)
+                self._list_widget.add_widget(card)
+                self._row_widgets[seed.path] = card
             if self._filter_text.strip():
                 self._status_label.text = f"{len(sorted_visible)} of {total} match"
             else:
@@ -620,7 +627,26 @@ def _run_app(args: tuple[str, ...]) -> None:
                 self._expanded.discard(seed.path)
             else:
                 self._expanded.add(seed.path)
-            self._render_seeds()
+            self._swap_row(seed)
+
+        def _swap_row(self, seed: Seed) -> None:
+            """Rebuild just *seed*'s card in place. Avoids the full
+            list re-render that toggling expansion used to trigger —
+            with many seeds the per-card widget churn was visible as
+            input lag on every '+' click."""
+            assert self._list_widget is not None
+            old = self._row_widgets.get(seed.path)
+            if old is None or old.parent is None:
+                # Lost track of the widget (e.g. cache was cleared
+                # between renders). Fall back to a full re-render so
+                # state reconciles cleanly.
+                self._render_seeds()
+                return
+            idx = self._list_widget.children.index(old)
+            self._list_widget.remove_widget(old)
+            new = self._build_seed_row(seed)
+            self._list_widget.add_widget(new, index=idx)
+            self._row_widgets[seed.path] = new
 
         def _build_details_panel(self, seed: Seed) -> MDBoxLayout:
             slot_line_h = dp(36)
