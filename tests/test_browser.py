@@ -8,7 +8,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from seed_browser.browser import _format_seed_row, _format_version, sort_seeds
+from seed_browser.browser import (
+    _format_seed_row,
+    _format_version,
+    filter_seeds,
+    sort_seeds,
+)
 from seed_browser.scanner import Seed
 
 
@@ -168,6 +173,51 @@ def test_sort_seeds_by_game_trails_seeds_without_decoded_games() -> None:
         "a",
         "no-game",
     ]
+
+
+def test_filter_seeds_empty_query_returns_full_list() -> None:
+    a = _seed("a", mtime=1.0, size=10, slots=1)
+    b = _seed("b", mtime=2.0, size=10, slots=1)
+    assert filter_seeds([a, b], "") == [a, b]
+    assert filter_seeds([a, b], "   ") == [a, b]
+
+
+def test_filter_seeds_matches_filename_case_insensitive() -> None:
+    a = Seed(path=Path("/tmp/AP_55176.zip"), mtime=1.0, size_bytes=10)
+    b = Seed(path=Path("/tmp/AP_60686.zip"), mtime=2.0, size_bytes=10)
+    assert filter_seeds([a, b], "55176") == [a]
+    assert filter_seeds([a, b], "AP_") == [a, b]
+
+
+def test_filter_seeds_matches_game_name() -> None:
+    a = _seed("a", mtime=1.0, size=10, slots=1, game="Minecraft")
+    b = _seed("b", mtime=2.0, size=10, slots=1, game="Jigsaw")
+    assert filter_seeds([a, b], "mine") == [a]
+    assert filter_seeds([a, b], "JIG") == [b]
+
+
+def test_filter_seeds_matches_slot_or_player_name() -> None:
+    a = Seed(
+        path=Path("/tmp/a"),
+        mtime=1.0,
+        size_bytes=10,
+        slots=[(1, "Joxtacy", "Minecraft")],
+        games=[("Minecraft", 1)],
+    )
+    b = Seed(
+        path=Path("/tmp/b"),
+        mtime=2.0,
+        size_bytes=10,
+        slots=[(1, "BobAP", "Minecraft")],
+        games=[("Minecraft", 1)],
+    )
+    assert filter_seeds([a, b], "jox") == [a]
+    assert filter_seeds([a, b], "bob") == [b]
+
+
+def test_filter_seeds_returns_empty_when_nothing_matches() -> None:
+    a = _seed("AP_55.zip", mtime=1.0, size=10, slots=1, game="Minecraft")
+    assert filter_seeds([a], "nothing-this-rare") == []
 
 
 def test_sort_seeds_does_not_mutate_input() -> None:

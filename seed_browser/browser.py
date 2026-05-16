@@ -76,6 +76,26 @@ def _format_size(n: int) -> str:
     return f"{size:.1f} {units[-1]}"
 
 
+def filter_seeds(seeds: list[Seed], query: str) -> list[Seed]:
+    """Filter *seeds* by case-insensitive substring match against the
+    filename, decoded game names, and decoded slot/player names.
+
+    Empty / whitespace-only *query* returns the full list. Pure helper
+    — exposed at module scope so it can be unit-tested without Kivy.
+    """
+    needle = query.strip().lower()
+    if not needle:
+        return list(seeds)
+    out: list[Seed] = []
+    for s in seeds:
+        hay = [s.path.name.lower()]
+        hay.extend(g.lower() for g, _ in s.games)
+        hay.extend(name.lower() for _, name, _ in s.slots)
+        if any(needle in h for h in hay):
+            out.append(s)
+    return out
+
+
 def sort_seeds(seeds: list[Seed], *, key: SortKey, desc: bool) -> list[Seed]:
     """Return *seeds* sorted by *key*. Pure helper — extracted for testing.
 
@@ -158,6 +178,7 @@ def _run_app(args: tuple[str, ...]) -> None:
     from kivymd.uix.label import MDLabel
     from kivymd.uix.list import MDList
     from kivymd.uix.scrollview import MDScrollView
+    from kivymd.uix.textfield import MDTextField, MDTextFieldHintText
     from kvui import ButtonsPrompt, ThemedApp
 
     output_dir = _resolve_output_dir()
@@ -179,6 +200,10 @@ def _run_app(args: tuple[str, ...]) -> None:
             """Paths of seeds whose detail panel is currently expanded.
             Survives ``_refresh()`` so toggle state isn't lost on
             re-scan."""
+            self._seeds_cache: list[Seed] = []
+            """Last successful scan result — sort/filter/expand toggles
+            re-render from this without hitting the filesystem again."""
+            self._filter_text: str = ""
 
         def build(self) -> MDBoxLayout:
             # Match the AP launcher's deep-navy backdrop. The default
@@ -194,6 +219,7 @@ def _run_app(args: tuple[str, ...]) -> None:
             )
 
             root.add_widget(self._build_header())
+            root.add_widget(self._build_search_bar())
             root.add_widget(self._build_sort_bar())
 
             scroll = MDScrollView()
@@ -240,6 +266,25 @@ def _run_app(args: tuple[str, ...]) -> None:
             header.add_widget(refresh_btn)
             return header
 
+        def _build_search_bar(self) -> MDBoxLayout:
+            bar = MDBoxLayout(
+                orientation="horizontal",
+                size_hint_y=None,
+                height=dp(56),
+                spacing=dp(8),
+            )
+            field = MDTextField(
+                MDTextFieldHintText(text="Search by filename, game, or player name"),
+                size_hint_x=1,
+            )
+            field.bind(text=lambda _w, value: self._on_filter_change(value))
+            bar.add_widget(field)
+            return bar
+
+        def _on_filter_change(self, text: str) -> None:
+            self._filter_text = text
+            self._render_seeds()
+
         def _build_sort_bar(self) -> MDBoxLayout:
             bar = MDBoxLayout(
                 orientation="horizontal",
@@ -277,7 +322,7 @@ def _run_app(args: tuple[str, ...]) -> None:
                 self._sort_key = key
                 self._sort_desc = True
             self._update_sort_button_labels()
-            self._refresh()
+            self._render_seeds()
 
         def _update_sort_button_labels(self) -> None:
             suffix = " (desc)" if self._sort_desc else " (asc)"
@@ -291,17 +336,21 @@ def _run_app(args: tuple[str, ...]) -> None:
                 btn.children[0].text = label
 
         def _refresh(self) -> None:
+            """Rescan disk and re-render. Use ``_render_seeds`` for
+            sort/filter/expand-toggle updates that don't need fresh
+            filesystem state."""
             assert self._list_widget is not None
-            assert self._status_label is not None
             self._list_widget.clear_widgets()
 
             if not output_dir.exists():
+                self._seeds_cache = []
                 self._show_message(
                     f"Output folder does not exist:\n{output_dir}",
                     status="folder missing",
                 )
                 return
             if not output_dir.is_dir():
+                self._seeds_cache = []
                 self._show_message(
                     f"Output path is not a directory:\n{output_dir}",
                     status="not a directory",
@@ -309,24 +358,50 @@ def _run_app(args: tuple[str, ...]) -> None:
                 return
 
             try:
-                seeds = scan_directory(output_dir)
+                self._seeds_cache = scan_directory(output_dir)
             except OSError as e:
+                self._seeds_cache = []
                 self._show_message(
                     f"Cannot read {output_dir}:\n{e}",
                     status="folder unreadable",
                 )
                 return
 
-            if not seeds:
+            self._render_seeds()
+
+        def _render_seeds(self) -> None:
+            """Render the cached seed list applying the current filter
+            and sort. Cheap — no disk access."""
+            assert self._list_widget is not None
+            assert self._status_label is not None
+            self._list_widget.clear_widgets()
+
+            if not self._seeds_cache:
                 self._show_message(
                     f"No AP_*.zip seeds found in\n{output_dir}",
                     status="0 seeds",
                 )
                 return
 
-            for seed in sort_seeds(seeds, key=self._sort_key, desc=self._sort_desc):
+            visible = filter_seeds(self._seeds_cache, self._filter_text)
+            sorted_visible = sort_seeds(
+                visible, key=self._sort_key, desc=self._sort_desc
+            )
+            total = len(self._seeds_cache)
+
+            if not sorted_visible:
+                self._show_message(
+                    f"No seeds match '{self._filter_text}'",
+                    status=f"0 of {total} match",
+                )
+                return
+
+            for seed in sorted_visible:
                 self._list_widget.add_widget(self._build_seed_row(seed))
-            self._status_label.text = f"{len(seeds)} seeds"
+            if self._filter_text.strip():
+                self._status_label.text = f"{len(sorted_visible)} of {total} match"
+            else:
+                self._status_label.text = f"{total} seeds"
 
         def _show_message(self, text: str, *, status: str) -> None:
             assert self._list_widget is not None
@@ -416,7 +491,7 @@ def _run_app(args: tuple[str, ...]) -> None:
                 self._expanded.discard(seed.path)
             else:
                 self._expanded.add(seed.path)
-            self._refresh()
+            self._render_seeds()
 
         def _build_details_panel(self, seed: Seed) -> MDBoxLayout:
             slot_line_h = dp(24)
