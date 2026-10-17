@@ -265,6 +265,15 @@ def _start_watcher(output_dir: Path, on_change: object) -> object | None:
 
 
 def _run_app(args: tuple[str, ...]) -> None:
+    # kvui MUST be imported before anything from kivy/kivymd. It sets
+    # Kivy's env/Config and pre-initialises the audio providers; on
+    # Linux, creating the Window (via `kivy.core.window`) before audio
+    # init deadlocks SDL — black window, unkillable process. kvui's own
+    # `assert "kivy" not in sys.modules` guard is stripped in frozen
+    # (optimised) AP builds, so nothing else catches the mis-ordering.
+    # `tests/test_browser_imports.py` pins this ordering.
+    from kvui import ButtonsPrompt, ThemedApp  # isort: skip
+
     from kivy.clock import Clock
     from kivy.core.window import Window
     from kivy.metrics import dp
@@ -275,7 +284,6 @@ def _run_app(args: tuple[str, ...]) -> None:
     from kivymd.uix.list import MDList
     from kivymd.uix.scrollview import MDScrollView
     from kivymd.uix.textfield import MDTextField, MDTextFieldHintText
-    from kvui import ButtonsPrompt, ThemedApp
 
     # Seed rows + 5-button action strip + sort bar are horizontally
     # demanding. Modest bump over Kivy's 800x600 default so multi-game

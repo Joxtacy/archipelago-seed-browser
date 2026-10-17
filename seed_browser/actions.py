@@ -127,7 +127,12 @@ def extract_slot_patch(seed: Seed, slot_num: int) -> Path:
 def reveal_in_file_manager(seed: Seed) -> None:
     """Open the OS file manager focused on *seed*'s zip."""
     cmd = _reveal_command(seed.path, sys.platform)
-    subprocess.Popen(cmd)
+    # Frozen Linux AP exports LD_LIBRARY_PATH pointing at its bundled
+    # libs, which can break the system file manager — strip it the same
+    # way AP's own ``Utils.open_file`` does.
+    from Utils import env_cleared_lib_path
+
+    subprocess.Popen(cmd, env=env_cleared_lib_path())
 
 
 def delete_seed(seed: Seed, *, confirmed: bool) -> None:
@@ -175,5 +180,8 @@ def _reveal_command(path: Path, platform: str) -> list[str]:
     if platform == "darwin":
         return ["open", "-R", str(path)]
     if platform.startswith("win"):
-        return ["explorer", f"/select,{path}"]
+        # Separate tokens: a single "/select,<path>" token gets quoted as a
+        # whole by list2cmdline when the path has spaces, and Explorer then
+        # ignores it and opens the default folder.
+        return ["explorer", "/select,", str(path)]
     return ["xdg-open", str(path.parent)]

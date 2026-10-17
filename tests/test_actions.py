@@ -35,7 +35,7 @@ def test_reveal_command_macos(tmp_path: Path) -> None:
 
 def test_reveal_command_windows(tmp_path: Path) -> None:
     p = tmp_path / "AP_1.zip"
-    assert _reveal_command(p, "win32") == ["explorer", f"/select,{p}"]
+    assert _reveal_command(p, "win32") == ["explorer", "/select,", str(p)]
 
 
 def test_reveal_command_linux_falls_back_to_parent(tmp_path: Path) -> None:
