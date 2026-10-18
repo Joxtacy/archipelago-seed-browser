@@ -73,6 +73,11 @@ class Seed:
     min_server_version: tuple[int, int, int] | None = None
     """Minimum AP version required to host this seed
     (``payload['minimum_versions']['server']``)."""
+    game_checksums: dict[str, str] = field(default_factory=dict)
+    """``{game_name: checksum}`` from the multidata's embedded
+    datapackage — a hash of each world's item/location tables at
+    generation time. Compared against the installed worlds to spot
+    apworlds that changed since the seed was generated."""
     has_spoiler: bool = False
     has_archipelago_file: bool = False
     has_save: bool = False
@@ -99,6 +104,7 @@ class _MultidataInfo:
     min_server_version: tuple[int, int, int] | None
     slot_totals: dict[int, int]
     """``{slot_num: total_locations}``"""
+    game_checksums: dict[str, str] = field(default_factory=dict)
 
 
 def scan_seed(path: Path) -> Seed:
@@ -144,6 +150,7 @@ def scan_seed(path: Path) -> Seed:
                 seed.generator_version = info.version
                 seed.min_server_version = info.min_server_version
                 seed.slot_totals = info.slot_totals
+                seed.game_checksums = info.game_checksums
     except zipfile.BadZipFile as e:
         seed.error = f"corrupt zip: {e}"
     except (OSError, ValueError, KeyError) as e:
@@ -358,7 +365,21 @@ def _decode_multidata(blob: bytes) -> _MultidataInfo:
         version=version,
         min_server_version=_coerce_version(minimum_versions.get("server")),
         slot_totals=slot_totals,
+        game_checksums=_extract_game_checksums(payload.get("datapackage")),
     )
+
+
+def _extract_game_checksums(datapackage: object) -> dict[str, str]:
+    """``{game: checksum}`` from a multidata ``datapackage`` map
+    (``{game: {"checksum": str, ...}}``). Games without a string
+    checksum (very old seeds) are skipped rather than failing the scan."""
+    if not isinstance(datapackage, dict):
+        return {}
+    out: dict[str, str] = {}
+    for game, data in datapackage.items():
+        if isinstance(data, dict) and isinstance(data.get("checksum"), str):
+            out[str(game)] = data["checksum"]
+    return out
 
 
 def _coerce_version(value: object) -> tuple[int, int, int] | None:

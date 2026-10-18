@@ -98,10 +98,11 @@ otherwise track in a sidecar.
   "remember-the-URL, open-a-tab" friction. Zero protocol risk; no
   authentication required from us. Stretch shape lives under "Bigger"
   below.
-- **Empty-spoiler edge case.** Some seeds have a `_Spoiler.txt` entry
-  that's just the header (race mode partial). Detect and reflect in the
-  Spoiler button state (e.g. show as "empty spoiler" rather than just
-  enabled).
+- ~~**Empty-spoiler edge case.**~~ Dropped 2026-10-18: not a real case
+  in AP 0.6.x. `Spoiler.to_file` always writes the `Locations:` section,
+  even at spoiler level 1, and race mode doesn't trim it; race seeds with
+  spoilers disabled have no `_Spoiler.txt` at all, which the Spoiler
+  button already handles.
 - **Persist sort preference** across sessions. Today every launch
   defaults to "date (desc)". One-line JSON sidecar in
   `~/Library/Application Support/Archipelago/seed_browser/state.json`.

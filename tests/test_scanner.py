@@ -18,6 +18,7 @@ from seed_browser.scanner import (
     Seed,
     _coerce_version,
     _collapse_games,
+    _extract_game_checksums,
     _extract_slot_patches,
     folder_fingerprint,
     scan_directory,
@@ -363,3 +364,17 @@ def test_folder_fingerprint_ignores_unrelated_changes(tmp_path: Path) -> None:
 
 def test_folder_fingerprint_missing_folder_is_none(tmp_path: Path) -> None:
     assert folder_fingerprint(tmp_path / "nope") is None
+
+
+def test_extract_game_checksums_reads_per_game_checksum() -> None:
+    dp = {
+        "Minecraft": {"checksum": "abc", "item_name_to_id": {}},
+        "Archipelago": {"checksum": "core"},
+    }
+    assert _extract_game_checksums(dp) == {"Minecraft": "abc", "Archipelago": "core"}
+
+
+def test_extract_game_checksums_skips_malformed_entries() -> None:
+    dp = {"Old": {"version": 3}, "Weird": "nope", "Bad": {"checksum": 5}, "Ok": {"checksum": "x"}}
+    assert _extract_game_checksums(dp) == {"Ok": "x"}
+    assert _extract_game_checksums(None) == {}

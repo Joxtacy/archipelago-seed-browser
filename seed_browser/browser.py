@@ -28,6 +28,8 @@ _SORT_LABELS: dict[SortKey, str] = {
     "game": "Game",
 }
 
+ApworldIssue = Literal["changed", "missing"]
+
 SeedState = Literal["untouched", "in_progress", "complete"]
 StateFilter = Literal["all", "untouched", "in_progress", "complete"]
 _STATE_LABELS: dict[StateFilter, str] = {
@@ -61,14 +63,23 @@ _POLL_INTERVAL_S = 2.0
 """How often the no-watchdog fallback re-fingerprints the output folder."""
 
 
-def _format_seed_row(seed: Seed, installed: Version | None = None) -> str:
+def _format_seed_row(
+    seed: Seed,
+    installed: Version | None = None,
+    apworlds: dict[str, ApworldIssue] | None = None,
+) -> str:
     """Compact collapsed-row label. Spoiler presence is already shown
     by the row's Spoiler button (enabled/disabled); the hosted
     timestamp + file size move to the expanded footer.
 
     When *installed* (the running AP version) is older than the seed's
     minimum server version, a warning is appended — Host is disabled
-    for such rows because MultiServer refuses to load them."""
+    for such rows because MultiServer refuses to load them.
+
+    *apworlds* (from :func:`apworld_issues`) adds an "apworld changed"
+    hint naming games whose installed world differs from generation.
+    Missing worlds are only shown in the expanded slot rows — hosting
+    doesn't need them, so they're not worth the row space."""
     if seed.error:
         return f"{seed.path.name}  —  error: {seed.error}"
     ts = datetime.datetime.fromtimestamp(seed.mtime).strftime("%Y-%m-%d %H:%M")
@@ -79,6 +90,9 @@ def _format_seed_row(seed: Seed, installed: Version | None = None) -> str:
         parts.append("hosted")
     if requires_newer_ap(seed, installed):
         parts.append(f"needs AP ≥ {_format_version(seed.min_server_version)}")
+    changed = [g for g, issue in (apworlds or {}).items() if issue == "changed"]
+    if changed:
+        parts.append(f"apworld changed: {', '.join(changed)}")
     return "  ·  ".join(parts)
 
 
@@ -106,6 +120,47 @@ def requires_newer_ap(seed: Seed, installed: Version | None) -> bool:
     if installed is None or seed.min_server_version is None:
         return False
     return seed.min_server_version > installed
+
+
+def apworld_issues(seed: Seed, installed: dict[str, str] | None) -> dict[str, ApworldIssue]:
+    """Compare *seed*'s generation-time datapackage checksums with the
+    *installed* ones (``{game: checksum}``), in the seed's game order.
+
+    ``"changed"`` — the installed world's item/location tables differ
+    from the ones the seed was generated with (clients may misbehave).
+    ``"missing"`` — no world for that game is installed. Matching games
+    are omitted. The core ``Archipelago`` package is skipped: it tracks
+    the AP version, which the version check already covers. Unknown
+    *installed* (no AP) or no recorded checksum → no claims either way.
+    """
+    if installed is None:
+        return {}
+    out: dict[str, ApworldIssue] = {}
+    for game, _count in seed.games:
+        expected = seed.game_checksums.get(game)
+        if expected is None or game == "Archipelago":
+            continue
+        actual = installed.get(game)
+        if actual is None:
+            out[game] = "missing"
+        elif actual != expected:
+            out[game] = "changed"
+    return out
+
+
+def _installed_checksums() -> dict[str, str] | None:
+    """``{game: checksum}`` for every world loaded in this process. The
+    launcher subprocess has already imported ``worlds`` (this module
+    lives in it), so this is a dict lookup, not a world load."""
+    try:
+        from worlds import network_data_package
+    except ImportError:
+        return None
+    return {
+        game: data["checksum"]
+        for game, data in network_data_package["games"].items()
+        if "checksum" in data
+    }
 
 
 def _installed_ap_version() -> Version | None:
@@ -335,6 +390,7 @@ def _run_app(args: tuple[str, ...]) -> None:
 
     output_dir = _resolve_output_dir()
     installed_version = _installed_ap_version()
+    installed_checksums = _installed_checksums()
     prefs_path = prefs.default_prefs_path()
     saved_prefs = prefs.load_prefs(prefs_path)
 
@@ -780,7 +836,9 @@ def _run_app(args: tuple[str, ...]) -> None:
                 header.add_widget(self._expand_button(seed, expanded))
             header.add_widget(
                 MDLabel(
-                    text=_format_seed_row(seed, installed_version),
+                    text=_format_seed_row(
+                        seed, installed_version, apworld_issues(seed, installed_checksums)
+                    ),
                     halign="left",
                     valign="center",
                 )
@@ -905,6 +963,12 @@ def _run_app(args: tuple[str, ...]) -> None:
             patch = seed.slot_patches.get(slot_num)
             patch_marker = f"  [{patch}]" if patch else ""
             progress_marker = _format_slot_progress(seed, slot_num)
+            issue = apworld_issues(seed, installed_checksums).get(game)
+            apworld_marker = {
+                "changed": "  ·  apworld changed since generation",
+                "missing": "  ·  apworld not installed",
+                None: "",
+            }[issue]
 
             row = MDBoxLayout(
                 orientation="horizontal",
@@ -916,7 +980,7 @@ def _run_app(args: tuple[str, ...]) -> None:
                 MDLabel(
                     text=(
                         f"Slot {slot_num} — {slot_name}  "
-                        f"({game}, {slot_type}){patch_marker}{progress_marker}"
+                        f"({game}, {slot_type}){patch_marker}{progress_marker}{apworld_marker}"
                     ),
                     halign="left",
                     valign="middle",

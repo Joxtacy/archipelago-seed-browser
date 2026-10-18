@@ -13,6 +13,7 @@ from seed_browser.browser import (
     _format_seed_row,
     _format_slot_progress,
     _format_version,
+    apworld_issues,
     filter_by_state,
     filter_seeds,
     requires_newer_ap,
@@ -515,3 +516,29 @@ def test_seed_id_extracts_digits_from_filename() -> None:
 
 def test_seed_id_falls_back_to_stem_for_unexpected_names() -> None:
     assert seed_id(_seed("weird.zip", mtime=0.0, size=1, slots=1)) == "weird"
+
+
+def _multi_game_seed(checksums: dict[str, str]) -> Seed:
+    s = _seed("AP_1.zip", mtime=0.0, size=1, slots=0)
+    s.games = [(g, 1) for g in checksums if g != "Archipelago"]
+    s.game_checksums = dict(checksums)
+    return s
+
+
+def test_apworld_issues_flags_changed_and_missing_in_seed_order() -> None:
+    seed = _multi_game_seed({"B": "b1", "A": "a1", "C": "c1", "Archipelago": "core1"})
+    installed = {"A": "a1", "B": "b2", "Archipelago": "core2"}
+    assert apworld_issues(seed, installed) == {"B": "changed", "C": "missing"}
+    assert list(apworld_issues(seed, installed)) == ["B", "C"]
+
+
+def test_apworld_issues_without_ap_or_checksums_makes_no_claims() -> None:
+    assert apworld_issues(_multi_game_seed({"A": "a1"}), None) == {}
+    no_checksums = _seed("AP_1.zip", mtime=0.0, size=1, slots=1)
+    assert apworld_issues(no_checksums, {}) == {}
+
+
+def test_format_seed_row_names_changed_apworlds_only() -> None:
+    seed = _multi_game_seed({"A": "a1", "B": "b1"})
+    row = _format_seed_row(seed, None, {"A": "changed", "B": "missing"})
+    assert row.endswith("apworld changed: A")
