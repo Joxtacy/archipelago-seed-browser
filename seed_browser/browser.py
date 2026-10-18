@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import datetime
 import logging
+import re
 import threading
 from pathlib import Path
 from typing import Literal
 
-from . import actions
+from . import actions, prefs
 from .scanner import Seed, folder_fingerprint, scan_directory
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,16 @@ def _format_seed_row(seed: Seed, installed: Version | None = None) -> str:
     if requires_newer_ap(seed, installed):
         parts.append(f"needs AP ≥ {_format_version(seed.min_server_version)}")
     return "  ·  ".join(parts)
+
+
+_SEED_ID_RE = re.compile(r"^AP_(\d+)\.zip$")
+
+
+def seed_id(seed: Seed) -> str:
+    """The numeric seed ID from ``AP_<id>.zip`` — what MultiServer and
+    archipelago.gg show. Falls back to the file stem for odd names."""
+    m = _SEED_ID_RE.match(seed.path.name)
+    return m.group(1) if m else seed.path.stem
 
 
 def _format_version(version: Version | None) -> str | None:
@@ -305,6 +316,7 @@ def _run_app(args: tuple[str, ...]) -> None:
     from kvui import ButtonsPrompt, ThemedApp  # isort: skip
 
     from kivy.clock import Clock
+    from kivy.core.clipboard import Clipboard
     from kivy.core.window import Window
     from kivy.metrics import dp
     from kivymd.uix.boxlayout import MDBoxLayout
@@ -323,6 +335,8 @@ def _run_app(args: tuple[str, ...]) -> None:
 
     output_dir = _resolve_output_dir()
     installed_version = _installed_ap_version()
+    prefs_path = prefs.default_prefs_path()
+    saved_prefs = prefs.load_prefs(prefs_path)
 
     class SeedBrowserApp(ThemedApp):
         title = "Seed Browser"
@@ -333,10 +347,10 @@ def _run_app(args: tuple[str, ...]) -> None:
             self._list_widget: MDList | None = None
             self._status_label: MDLabel | None = None
             self._sort_buttons: dict[SortKey, MDButton] = {}
-            self._sort_key: SortKey = "date"
-            self._sort_desc: bool = True
+            self._sort_key: SortKey = saved_prefs.sort_key
+            self._sort_desc: bool = saved_prefs.sort_desc
             self._state_buttons: dict[StateFilter, MDButton] = {}
-            self._state_filter: StateFilter = "all"
+            self._state_filter: StateFilter = saved_prefs.state_filter
             self._observer: object | None = None
             self._refresh_pending: bool = False
             self._last_fingerprint: frozenset[tuple[str, int, int]] | None = None
@@ -484,6 +498,17 @@ def _run_app(args: tuple[str, ...]) -> None:
             self._state_filter = state
             self._update_state_button_styles()
             self._render_seeds()
+            self._save_view_prefs()
+
+        def _save_view_prefs(self) -> None:
+            prefs.save_prefs(
+                prefs_path,
+                prefs.ViewPrefs(
+                    sort_key=self._sort_key,
+                    sort_desc=self._sort_desc,
+                    state_filter=self._state_filter,
+                ),
+            )
 
         def _update_state_button_styles(self) -> None:
             for key, btn in self._state_buttons.items():
@@ -527,6 +552,7 @@ def _run_app(args: tuple[str, ...]) -> None:
                 self._sort_desc = True
             self._update_sort_button_labels()
             self._render_seeds()
+            self._save_view_prefs()
 
         def _update_sort_button_labels(self) -> None:
             suffix = " (desc)" if self._sort_desc else " (asc)"
@@ -816,7 +842,11 @@ def _run_app(args: tuple[str, ...]) -> None:
             footer_line_h = dp(24)
             footer_lines = _format_seed_footer_lines(seed)
             n_slots = len(seed.slots)
-            panel_height = n_slots * slot_line_h + len(footer_lines) * footer_line_h + dp(8)
+            # First footer line (filename) shares a row with the Copy ID
+            # button, so it's slot-row height rather than label height.
+            panel_height = (
+                (n_slots + 1) * slot_line_h + (len(footer_lines) - 1) * footer_line_h + dp(8)
+            )
 
             panel = MDBoxLayout(
                 orientation="vertical",
@@ -827,7 +857,25 @@ def _run_app(args: tuple[str, ...]) -> None:
             )
             for slot_num, slot_name, game in seed.slots:
                 panel.add_widget(self._build_slot_row(seed, slot_num, slot_name, game))
-            for line in footer_lines:
+            first, *rest = footer_lines
+            id_row = MDBoxLayout(
+                orientation="horizontal",
+                size_hint_y=None,
+                height=slot_line_h,
+                spacing=dp(8),
+            )
+            id_row.add_widget(MDLabel(text=first, halign="left", valign="middle"))
+            copy_btn = MDButton(
+                MDButtonText(text="Copy ID"),
+                style="tonal",
+                size_hint=(None, None),
+                size=(dp(148), dp(32)),
+                pos_hint={"center_y": 0.5},
+            )
+            copy_btn.bind(on_release=lambda _btn, s=seed: self._copy_seed_id(s))
+            id_row.add_widget(copy_btn)
+            panel.add_widget(id_row)
+            for line in rest:
                 panel.add_widget(
                     MDLabel(
                         text=line,
@@ -838,6 +886,17 @@ def _run_app(args: tuple[str, ...]) -> None:
                     )
                 )
             return panel
+
+        def _copy_seed_id(self, seed: Seed) -> None:
+            assert self._status_label is not None
+            sid = seed_id(seed)
+            try:
+                Clipboard.copy(sid)
+            except Exception as e:  # noqa: BLE001  # surface, never crash
+                logger.exception("clipboard copy failed")
+                self._status_label.text = f"copy failed: {e}"
+                return
+            self._status_label.text = f"copied seed ID {sid}"
 
         def _build_slot_row(
             self, seed: Seed, slot_num: int, slot_name: str, game: str

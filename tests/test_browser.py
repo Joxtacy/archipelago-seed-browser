@@ -16,6 +16,7 @@ from seed_browser.browser import (
     filter_by_state,
     filter_seeds,
     requires_newer_ap,
+    seed_id,
     seed_state,
     sort_seeds,
 )
@@ -504,3 +505,13 @@ def test_format_seed_row_flags_seed_needing_newer_ap() -> None:
     row = _format_seed_row(_seed_needing((0, 7, 0)), (0, 6, 8))
     assert row.endswith("needs AP ≥ 0.7.0")
     assert "needs AP" not in _format_seed_row(_seed_needing((0, 6, 0)), (0, 6, 8))
+
+
+def test_seed_id_extracts_digits_from_filename() -> None:
+    assert seed_id(_seed("AP_49188265015727703279.zip", mtime=0.0, size=1, slots=1)) == (
+        "49188265015727703279"
+    )
+
+
+def test_seed_id_falls_back_to_stem_for_unexpected_names() -> None:
+    assert seed_id(_seed("weird.zip", mtime=0.0, size=1, slots=1)) == "weird"
