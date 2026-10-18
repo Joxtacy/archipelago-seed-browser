@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import os
 import re
 import zipfile
 import zlib
@@ -27,6 +28,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 _SEED_FILE_RE = re.compile(r"^AP_\d+\.zip$")
+_FINGERPRINT_FILE_RE = re.compile(r"^AP_\d+\.(?:zip|apsave)$")
 _PATCH_FILE_RE = re.compile(r"^AP_\d+_P(\d+)_.+\.([^.]+)$")
 _MAX_MULTIDATA_FORMAT = 3
 
@@ -253,6 +255,32 @@ def scan_directory(
 
     seeds.sort(key=lambda s: s.mtime, reverse=True)
     return seeds
+
+
+def folder_fingerprint(folder: Path) -> frozenset[tuple[str, int, int]] | None:
+    """Cheap change-detection token for *folder*: ``(name, mtime_ns,
+    size)`` for every seed zip and ``.apsave``. Returns ``None`` when the
+    folder can't be listed.
+
+    Used by the polling fallback when ``watchdog`` is unavailable (the
+    frozen AP builds don't bundle it). Per-file stats rather than the
+    directory mtime because ``MultiServer._save`` rewrites ``.apsave``
+    in place, which doesn't touch the directory entry.
+    """
+    out: set[tuple[str, int, int]] = set()
+    try:
+        with os.scandir(folder) as it:
+            for entry in it:
+                if not _FINGERPRINT_FILE_RE.match(entry.name):
+                    continue
+                try:
+                    st = entry.stat()
+                except OSError:
+                    continue
+                out.add((entry.name, st.st_mtime_ns, st.st_size))
+    except OSError:
+        return None
+    return frozenset(out)
 
 
 def _scan_with_cache(path: Path, cache: dict[Path, Seed] | None) -> Seed:

@@ -97,7 +97,11 @@ sort/filter/expand-toggle re-render from it without touching disk.
 
 `watchdog` is soft-imported. When present, `_start_watcher` debounces
 filesystem events via `Clock.schedule_once(..., 0.5)` and re-scans on the
-main thread. When absent, the Refresh button is the only refresh path.
+main thread. When absent (the frozen AP builds don't bundle it), a
+`Clock.schedule_interval` poll compares `scanner.folder_fingerprint`
+(per-file name/mtime/size of seed zips + `.apsave`s — `.apsave` is
+rewritten in place, so directory mtime isn't enough) and triggers the
+same debounced refresh.
 
 ### Action quirks worth knowing
 - **Host (macOS)**: `Launcher.launch` uses `open -a Terminal.app <argv>`,
@@ -107,6 +111,11 @@ main thread. When absent, the Refresh button is the only refresh path.
   path. Keep the single-`tell` block — splitting into two top-level
   `tell` directives launches Terminal twice and leaves a stray empty
   window.
+- **Reveal (Linux)**: tries freedesktop `FileManager1.ShowItems` over
+  D-Bus (`gdbus`, then `dbus-send`) so the zip is selected, falling back
+  to `xdg-open <parent>`. All reveal subprocesses run with AP's
+  `env_cleared_lib_path()` — frozen AP's `LD_LIBRARY_PATH` breaks
+  system file managers.
 - **Delete**: prefers `send2trash` (soft-imported); falls back to
   `Path.unlink`. Always requires `confirmed=True` — the UI drives the
   confirmation dialog.

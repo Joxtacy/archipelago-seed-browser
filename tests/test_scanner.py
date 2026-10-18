@@ -19,6 +19,7 @@ from seed_browser.scanner import (
     _coerce_version,
     _collapse_games,
     _extract_slot_patches,
+    folder_fingerprint,
     scan_directory,
     scan_seed,
 )
@@ -332,3 +333,33 @@ def test_scan_real_seeds_from_output_dir() -> None:
     for s in decoded:
         assert s.slots, f"{s.path.name}: empty slots despite has_archipelago_file"
         assert s.games, f"{s.path.name}: empty games despite slots"
+
+
+def test_folder_fingerprint_tracks_seed_and_save_files_only(tmp_path: Path) -> None:
+    (tmp_path / "AP_1.zip").write_bytes(b"z")
+    (tmp_path / "AP_1.apsave").write_bytes(b"s")
+    (tmp_path / "notes.txt").write_bytes(b"x")
+    names = {name for name, _, _ in folder_fingerprint(tmp_path) or ()}
+    assert names == {"AP_1.zip", "AP_1.apsave"}
+
+
+def test_folder_fingerprint_changes_on_in_place_save_rewrite(tmp_path: Path) -> None:
+    save = tmp_path / "AP_1.apsave"
+    save.write_bytes(b"one")
+    before = folder_fingerprint(tmp_path)
+    # MultiServer rewrites the save in place — the directory entry is
+    # untouched, so only per-file stats can see it.
+    save.write_bytes(b"three")
+    os.utime(save, ns=(1, 1))
+    assert folder_fingerprint(tmp_path) != before
+
+
+def test_folder_fingerprint_ignores_unrelated_changes(tmp_path: Path) -> None:
+    (tmp_path / "AP_1.zip").write_bytes(b"z")
+    before = folder_fingerprint(tmp_path)
+    (tmp_path / "AP_1_Spoiler.txt").write_bytes(b"x")
+    assert folder_fingerprint(tmp_path) == before
+
+
+def test_folder_fingerprint_missing_folder_is_none(tmp_path: Path) -> None:
+    assert folder_fingerprint(tmp_path / "nope") is None

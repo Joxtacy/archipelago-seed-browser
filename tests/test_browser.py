@@ -15,6 +15,7 @@ from seed_browser.browser import (
     _format_version,
     filter_by_state,
     filter_seeds,
+    requires_newer_ap,
     seed_state,
     sort_seeds,
 )
@@ -477,3 +478,29 @@ def test_filter_by_state_complete_picks_only_finished_seeds() -> None:
     assert [s.path.name for s in filter_by_state([done, in_flight, untouched], "complete")] == [
         "done"
     ]
+
+
+def _seed_needing(min_server: tuple[int, int, int] | None) -> Seed:
+    s = _seed("AP_1.zip", mtime=0.0, size=1, slots=1)
+    s.min_server_version = min_server
+    return s
+
+
+def test_requires_newer_ap_when_seed_minimum_exceeds_installed() -> None:
+    assert requires_newer_ap(_seed_needing((0, 7, 0)), (0, 6, 8))
+
+
+def test_requires_newer_ap_false_when_equal_or_older() -> None:
+    assert not requires_newer_ap(_seed_needing((0, 6, 8)), (0, 6, 8))
+    assert not requires_newer_ap(_seed_needing((0, 5, 0)), (0, 6, 8))
+
+
+def test_requires_newer_ap_unknown_versions_never_block() -> None:
+    assert not requires_newer_ap(_seed_needing(None), (0, 6, 8))
+    assert not requires_newer_ap(_seed_needing((9, 9, 9)), None)
+
+
+def test_format_seed_row_flags_seed_needing_newer_ap() -> None:
+    row = _format_seed_row(_seed_needing((0, 7, 0)), (0, 6, 8))
+    assert row.endswith("needs AP ≥ 0.7.0")
+    assert "needs AP" not in _format_seed_row(_seed_needing((0, 6, 0)), (0, 6, 8))

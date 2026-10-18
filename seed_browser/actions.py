@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -125,14 +126,79 @@ def extract_slot_patch(seed: Seed, slot_num: int) -> Path:
 
 
 def reveal_in_file_manager(seed: Seed) -> None:
-    """Open the OS file manager focused on *seed*'s zip."""
-    cmd = _reveal_command(seed.path, sys.platform)
+    """Open the OS file manager focused on *seed*'s zip.
+
+    On Linux, tries the freedesktop ``FileManager1.ShowItems`` D-Bus call
+    first (Dolphin, Nautilus, Nemo, Thunar, … implement it) so the zip is
+    actually selected; falls back to opening the parent folder.
+    """
     # Frozen Linux AP exports LD_LIBRARY_PATH pointing at its bundled
     # libs, which can break the system file manager — strip it the same
     # way AP's own ``Utils.open_file`` does.
     from Utils import env_cleared_lib_path
 
-    subprocess.Popen(cmd, env=env_cleared_lib_path())
+    env = env_cleared_lib_path()
+    if sys.platform.startswith("linux") and _try_show_items(seed.path, env):
+        return
+    subprocess.Popen(_reveal_command(seed.path, sys.platform), env=env)
+
+
+_FM1 = "org.freedesktop.FileManager1"
+_FM1_PATH = "/org/freedesktop/FileManager1"
+
+
+def _try_show_items(path: Path, env: object) -> bool:
+    """Ask the session's file manager to select *path* over D-Bus.
+    Returns ``False`` when no client tool is installed or no file manager
+    owns the ``FileManager1`` name, so the caller can fall back."""
+    for cmd in _show_items_commands(path):
+        if shutil.which(cmd[0]) is None:
+            continue
+        try:
+            result = subprocess.run(cmd, env=env, capture_output=True, timeout=3)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if result.returncode == 0:
+            return True
+    return False
+
+
+def _show_items_commands(path: Path) -> list[list[str]]:
+    """Pure helper — candidate argvs for ``FileManager1.ShowItems``, in
+    preference order (``gdbus`` ships with GLib, ``dbus-send`` with
+    libdbus; most desktops have at least one).
+
+    ``as_uri`` percent-encodes quotes, commas and spaces, so the URI is
+    safe inside both the GVariant ``['…']`` literal and dbus-send's
+    comma-separated ``array:string:`` syntax.
+    """
+    uri = path.absolute().as_uri()
+    return [
+        [
+            "gdbus",
+            "call",
+            "--session",
+            "--dest",
+            _FM1,
+            "--object-path",
+            _FM1_PATH,
+            "--method",
+            f"{_FM1}.ShowItems",
+            f"['{uri}']",
+            "''",
+        ],
+        [
+            "dbus-send",
+            "--session",
+            "--print-reply",
+            f"--dest={_FM1}",
+            "--type=method_call",
+            _FM1_PATH,
+            f"{_FM1}.ShowItems",
+            f"array:string:{uri}",
+            "string:",
+        ],
+    ]
 
 
 def delete_seed(seed: Seed, *, confirmed: bool) -> None:

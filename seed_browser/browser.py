@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Literal
 
 from . import actions
-from .scanner import Seed, scan_directory
+from .scanner import Seed, folder_fingerprint, scan_directory
 
 logger = logging.getLogger(__name__)
 
@@ -54,10 +54,20 @@ def _resolve_output_dir() -> Path:
     return Path(output_path())
 
 
-def _format_seed_row(seed: Seed) -> str:
+Version = tuple[int, int, int]
+
+_POLL_INTERVAL_S = 2.0
+"""How often the no-watchdog fallback re-fingerprints the output folder."""
+
+
+def _format_seed_row(seed: Seed, installed: Version | None = None) -> str:
     """Compact collapsed-row label. Spoiler presence is already shown
     by the row's Spoiler button (enabled/disabled); the hosted
-    timestamp + file size move to the expanded footer."""
+    timestamp + file size move to the expanded footer.
+
+    When *installed* (the running AP version) is older than the seed's
+    minimum server version, a warning is appended — Host is disabled
+    for such rows because MultiServer refuses to load them."""
     if seed.error:
         return f"{seed.path.name}  —  error: {seed.error}"
     ts = datetime.datetime.fromtimestamp(seed.mtime).strftime("%Y-%m-%d %H:%M")
@@ -66,13 +76,33 @@ def _format_seed_row(seed: Seed) -> str:
     parts = [ts, f"{nslots} slots", games_str]
     if seed.has_save:
         parts.append("hosted")
+    if requires_newer_ap(seed, installed):
+        parts.append(f"needs AP ≥ {_format_version(seed.min_server_version)}")
     return "  ·  ".join(parts)
 
 
-def _format_version(version: tuple[int, int, int] | None) -> str | None:
+def _format_version(version: Version | None) -> str | None:
     if version is None:
         return None
     return ".".join(str(p) for p in version)
+
+
+def requires_newer_ap(seed: Seed, installed: Version | None) -> bool:
+    """True when *seed*'s minimum server version exceeds the running AP
+    version. Mirrors MultiServer's own load-time gate
+    (``mdata_ver > version_tuple``). Unknown on either side → False:
+    don't block hosting on missing metadata."""
+    if installed is None or seed.min_server_version is None:
+        return False
+    return seed.min_server_version > installed
+
+
+def _installed_ap_version() -> Version | None:
+    try:
+        from Utils import version_tuple
+    except ImportError:
+        return None
+    return (version_tuple.major, version_tuple.minor, version_tuple.build)
 
 
 def _format_seed_footer_lines(seed: Seed) -> list[str]:
@@ -250,7 +280,7 @@ def _start_watcher(output_dir: Path, on_change: object) -> object | None:
         from watchdog.events import FileSystemEventHandler
         from watchdog.observers import Observer
     except ImportError:
-        logger.info("watchdog not installed — auto-refresh disabled")
+        logger.info("watchdog not installed — polling output folder instead")
         return None
 
     class _Handler(FileSystemEventHandler):
@@ -292,6 +322,7 @@ def _run_app(args: tuple[str, ...]) -> None:
     Window.size = (1000, 700)
 
     output_dir = _resolve_output_dir()
+    installed_version = _installed_ap_version()
 
     class SeedBrowserApp(ThemedApp):
         title = "Seed Browser"
@@ -308,6 +339,9 @@ def _run_app(args: tuple[str, ...]) -> None:
             self._state_filter: StateFilter = "all"
             self._observer: object | None = None
             self._refresh_pending: bool = False
+            self._last_fingerprint: frozenset[tuple[str, int, int]] | None = None
+            """Polling-fallback state: the folder fingerprint seen on
+            the previous tick. Only used when watchdog is unavailable."""
             self._expanded: set[Path] = set()
             """Paths of seeds whose detail panel is currently expanded.
             Survives ``_refresh()`` so toggle state isn't lost on
@@ -364,6 +398,12 @@ def _run_app(args: tuple[str, ...]) -> None:
 
             self._refresh()
             self._observer = _start_watcher(output_dir, self._on_watcher_event)
+            if self._observer is None:
+                # Frozen AP builds don't bundle watchdog. Poll a cheap
+                # per-file fingerprint instead so auto-refresh still
+                # works; the scan cache keeps the resulting rescans cheap.
+                self._last_fingerprint = folder_fingerprint(output_dir)
+                Clock.schedule_interval(lambda _dt: self._poll_output_dir(), _POLL_INTERVAL_S)
             return root
 
         def _build_header(self) -> MDBoxLayout:
@@ -673,6 +713,14 @@ def _run_app(args: tuple[str, ...]) -> None:
             self._refresh_pending = True
             Clock.schedule_once(lambda _dt: self._coalesced_refresh(), 0.5)
 
+        def _poll_output_dir(self) -> None:
+            """Polling fallback for when watchdog is unavailable."""
+            fingerprint = folder_fingerprint(output_dir)
+            if fingerprint == self._last_fingerprint:
+                return
+            self._last_fingerprint = fingerprint
+            self._on_watcher_event()
+
         def _coalesced_refresh(self) -> None:
             self._refresh_pending = False
             self._refresh()
@@ -706,7 +754,7 @@ def _run_app(args: tuple[str, ...]) -> None:
                 header.add_widget(self._expand_button(seed, expanded))
             header.add_widget(
                 MDLabel(
-                    text=_format_seed_row(seed),
+                    text=_format_seed_row(seed, installed_version),
                     halign="left",
                     valign="center",
                 )
@@ -851,7 +899,11 @@ def _run_app(args: tuple[str, ...]) -> None:
                 self._action_button(
                     "Host",
                     lambda _btn, s=seed: self._do_action(actions.host_seed, s, "host"),
-                    disabled=corrupt or not seed.has_archipelago_file,
+                    disabled=(
+                        corrupt
+                        or not seed.has_archipelago_file
+                        or requires_newer_ap(seed, installed_version)
+                    ),
                 )
             )
             box.add_widget(

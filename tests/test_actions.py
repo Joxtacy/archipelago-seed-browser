@@ -16,6 +16,7 @@ import pytest
 from seed_browser.actions import (
     _macos_terminal_command,
     _reveal_command,
+    _show_items_commands,
     delete_seed,
     extract_slot_patch,
     open_in_browser_upload,
@@ -42,6 +43,17 @@ def test_reveal_command_linux_falls_back_to_parent(tmp_path: Path) -> None:
     p = tmp_path / "AP_1.zip"
     # xdg-open has no portable "select" flag; we open the parent dir instead.
     assert _reveal_command(p, "linux") == ["xdg-open", str(p.parent)]
+
+
+def test_show_items_commands_percent_encode_awkward_paths(tmp_path: Path) -> None:
+    p = tmp_path / "a b" / "AP_1, it's.zip"
+    gdbus, dbus_send = _show_items_commands(p)
+    uri = p.as_uri()
+    # Quotes and commas must be escaped: an unescaped ' would end the
+    # GVariant string literal, and a , would split dbus-send's array.
+    assert "'" not in uri and "," not in uri and " " not in uri
+    assert gdbus[0] == "gdbus" and f"['{uri}']" in gdbus
+    assert dbus_send[0] == "dbus-send" and f"array:string:{uri}" in dbus_send
 
 
 def test_delete_seed_refuses_without_confirmation(tmp_path: Path) -> None:
