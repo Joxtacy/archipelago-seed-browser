@@ -9,11 +9,12 @@ or raises — UI is responsible for surfacing errors.
 Why we shell out to Host:
     The launcher's Host ``Component`` is registered with ``script_name``
     only (no ``func``) — there is no callable to invoke directly. The
-    canonical dispatch is ``Launcher.launch(Launcher.get_exe(host),
+    canonical dispatch is ``Launcher.launch(get_exe(host),
     in_terminal=host.cli)``: Host has ``cli=True``, so on macOS/Linux it
     must run inside a terminal window or MultiServer sits silently
-    blocked on stdin. We import those helpers from ``Launcher.py`` —
-    its module-level imports do not pull Kivy, so the cost is bounded.
+    blocked on stdin. ``Launcher.py``'s module-level imports do not pull
+    Kivy, so the cost is bounded. ``get_exe`` lives in ``Launcher`` up to
+    AP 0.6.7 and moved to ``worlds.LauncherComponents`` in 0.6.8.
 """
 
 from __future__ import annotations
@@ -48,12 +49,13 @@ def host_seed(seed: Seed) -> None:
     with the seed argument.
     """
     import Launcher
-    from worlds.LauncherComponents import components
+    from worlds import LauncherComponents
 
-    host = next((c for c in components if c.display_name == "Host"), None)
+    host = next((c for c in LauncherComponents.components if c.display_name == "Host"), None)
     if host is None:
         raise RuntimeError("Host component not registered in this Archipelago install")
-    exe = Launcher.get_exe(host)
+    get_exe = getattr(LauncherComponents, "get_exe", None) or Launcher.get_exe
+    exe = get_exe(host)
     if exe is None:
         raise RuntimeError("Cannot resolve Host executable from component metadata")
     argv = [*exe, str(seed.path)]

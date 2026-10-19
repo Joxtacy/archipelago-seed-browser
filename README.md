@@ -31,7 +31,7 @@ Ships as a single `seed_browser.apworld` you drop into your Archipelago
 3. Restart the Archipelago Launcher. The **Seed Browser** tile appears under
    the Tools row.
 
-Tested against Archipelago **0.6.7**.
+Tested against Archipelago **0.6.7** and **0.6.8**.
 
 ## Build from source
 

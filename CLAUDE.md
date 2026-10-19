@@ -10,7 +10,7 @@ that users drop into AP's `custom_worlds/` directory. It registers a
 lists local multiworld seed zips with per-seed actions (host, open
 spoiler, reveal, delete, extract patch).
 
-Target AP version: **0.6.7**. Python: `>=3.11,<3.14` (AP's `ModuleUpdate`
+Target AP versions: **0.6.7** and **0.6.8**. Python: `>=3.11,<3.14` (AP's `ModuleUpdate`
 hard-blocks 3.14+). Project uses `uv` for env + dependency management.
 
 ## Common commands
