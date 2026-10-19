@@ -64,7 +64,7 @@ not allowed. Update `world_version` only on stable tags (e.g. `1.0.0`,
    ```
 6. **Verify the release page** at
    `github.com/Joxtacy/archipelago-seed-browser/releases/tag/v1.0.0`.
-   Confirm `seed_browser.apworld` is attached and the auto-generated notes
+   Confirm `seed_browser.apworld` is attached and the generated notes
    look reasonable. Edit notes via the GitHub UI if you want to polish.
 
 ## What the workflow does
@@ -77,24 +77,29 @@ not allowed. Update `world_version` only on stable tags (e.g. `1.0.0`,
 3. Runs `ruff check` and `pytest`. **A failure here aborts the release**
    — no broken artifact gets published.
 4. Runs `scripts/build_apworld.sh` to produce `dist/seed_browser.apworld`.
-5. Invokes `gh release create <tag> --generate-notes [--prerelease]
-   dist/seed_browser.apworld`. The `--generate-notes` flag asks GitHub to
-   build release notes from commits and merged PRs since the previous
-   release tag.
+5. Renders release notes with [git-cliff](https://git-cliff.org) from the
+   conventional commits between the previous tag and this one
+   (`uvx git-cliff --current`, configured by `cliff.toml`).
+6. Invokes `gh release create <tag> --notes-file RELEASE_NOTES.md
+   [--prerelease] dist/seed_browser.apworld`.
 
 ## Release notes
 
-Auto-generated notes pull from:
+Notes are built from commit subjects, so the commit message *is* the
+release note — write `feat:` / `fix:` subjects for users. `cliff.toml`
+groups them into Features, Bug fixes, Performance, Refactoring and
+Documentation; `chore`, `ci`, `style`, `test` and `build` commits are
+left out, as are non-conventional subjects.
 
-- Commit titles between the previous release tag and this one.
-- Merged PRs in that range (with author attribution).
-- Contributors in that range.
+Preview before tagging:
 
-If you want richer / curated notes for a particular release, edit the
-release on the GitHub UI after the workflow finishes — the auto-generated
-body is overwritable. There is currently no `CHANGELOG.md`; if that ever
-becomes useful, drop one in and have the workflow include it instead of
-(or alongside) `--generate-notes`.
+```sh
+uvx git-cliff --unreleased --strip all
+```
+
+The range is "previous tag → this tag", prereleases included: a stable
+`v1.0.0` cut after `v1.0.0-rc1` only lists what changed since the rc.
+Edit the release on the GitHub UI afterwards if you want to polish.
 
 ## Recovering from a failed release
 

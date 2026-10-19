@@ -29,6 +29,9 @@ jobs:
         run: uv run pytest
       - name: Build apworld
         run: ./scripts/build_apworld.sh
+      - name: Generate release notes
+        # Conventional commits since the previous tag, grouped per cliff.toml.
+        run: uvx git-cliff@2.14.2 --current --strip all -o RELEASE_NOTES.md
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -43,6 +46,6 @@ jobs:
           fi
           gh release create "$TAG" \
             --title "$TAG" \
-            --generate-notes \
+            --notes-file RELEASE_NOTES.md \
             $FLAGS \
             dist/seed_browser.apworld
